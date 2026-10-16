@@ -394,6 +394,37 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 
 /* ── Student List ───────────────────────── */
+/* 搜索框：只在左侧列表上方，按姓名 / 学号过滤显示（纯视图过滤，不影响排班与导出，见 §4.15） */
+.student-search {
+  position: relative; display: flex; align-items: center; flex-shrink: 0;
+}
+.student-search .search-icon {
+  position: absolute; left: 9px; font-size: 14px; line-height: 1;
+  color: var(--text-muted); pointer-events: none;
+}
+.search-input {
+  width: 100%; height: 32px; padding: 0 28px 0 26px;
+  font-family: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg);
+  border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  outline: none; transition: border-color var(--transition), box-shadow var(--transition);
+}
+.search-input::placeholder { color: var(--text-muted); }
+.search-input:focus { border-color: var(--primary); box-shadow: var(--ring); }
+.student-search .search-clear {
+  position: absolute; right: 4px; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; border-radius: 4px;
+  color: var(--text-muted); font-size: 15px; line-height: 1; cursor: pointer;
+  transition: all var(--transition);
+}
+.student-search .search-clear:hover { color: var(--danger); background: var(--danger-light); }
+/* 搜索无结果时的占位行（渲染在 #studentList 内部） */
+.student-empty {
+  padding: 20px 12px; text-align: center;
+  color: var(--text-muted); font-size: 12px; line-height: 1.7;
+}
+
 .student-list {
   flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 60px;
   border: 1.5px solid var(--border); border-radius: var(--radius-sm);
@@ -1478,6 +1509,18 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   <div class="left-panel">
     <div class="panel-body">
       <div class="section-title">学号列表</div>
+      <!-- 搜索框放在列表**外面**：renderStudentList() 每次都整段重写 #studentList.innerHTML，
+           输入框放进列表里会被反复重建、丢掉输入焦点（与 §4.13 第 4 条同类坑）。 -->
+      <div class="student-search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input type="text" id="studentSearch" class="search-input"
+               placeholder="搜索姓名或学号…"
+               autocomplete="off" spellcheck="false"
+               oninput="setStudentQuery(this.value)"
+               onkeydown="onStudentSearchKeydown(event)">
+        <button type="button" class="search-clear" id="studentSearchClear"
+                onclick="clearStudentQuery()" title="清除搜索" hidden>×</button>
+      </div>
       <div id="studentList" class="student-list"></div>
       <div id="studentCount" class="student-count">共 0 人</div>
 
@@ -1635,7 +1678,10 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
           课表冲突与班次人数上限始终都会遵守。</p>
         <p><strong>3. 查看/调整</strong>：右侧表格<strong>始终显示当前值班模板的时段</strong>（未排班时人数显示为 0/N），
           可<strong>拖拽</strong>学生标签到其他班次调整，也可以直接把左侧的同学拖进格子手动排班。
-          右上角可在<strong>「值班表」</strong>（谁在值班）与<strong>「空课表」</strong>（每个时段谁有空）之间切换，单周 / 双周也在那里切换。</p>
+          右上角可在<strong>「值班表」</strong>（谁在值班）与<strong>「空课表」</strong>（每个时段谁有空）之间切换，单周 / 双周也在那里切换。<br>
+          左侧「学号列表」上方的<strong>搜索框</strong>可按<strong>姓名或学号</strong>快速找人（支持只输一部分，
+          英文姓名不分大小写）；它<strong>只过滤左侧列表的显示</strong>，不会把人从排班、课表或导出结果里去掉，
+          点 × 或按 Esc 即可恢复完整列表。</p>
         <p><strong>4. 连续排班</strong>：顶部<b>「编辑」菜单 →「连续排班」</b>开关决定同一人的班次怎么摆放。
           <strong>勾选</strong>＝尽量把班次连成片（同一天<b>首尾相接</b>的班次尽量给同一个人，相邻几天也尽量连着排）；
           <strong>不勾选</strong>（默认）＝反过来尽量分散，避免连班、也避免连着几天都排同一个人。
@@ -2174,6 +2220,8 @@ const state = {
   locks: { odd: {}, even: {} },
   // 「学号列表上锁定」的学号：自动排班既不添加、也不修改这些同学的班次（见 §4.9.1）
   studentLocks: [],
+  // 左侧学号列表的搜索词（纯视图过滤，不影响排班 / 抓课表 / 导出，见 §4.15）
+  studentQuery: '',
   currentCourseModalSid: null  // 当前打开课表弹窗的学生学号
 };
 
@@ -2614,6 +2662,12 @@ function renderStudentList() {
     return cb - ca;
   });
 
+  // 搜索过滤（纯视图，见 §4.15）：在排序之后做，因此过滤结果的相对顺序不变。
+  // 注意 newSids / 错峰记账仍按**全部学生**算 —— 过滤只是少渲染几条，
+  // 不能让「搜索一下」被误判成「这些人都是新来的」而重放整列入场动画。
+  const visible = filterStudentsByQuery(sorted);
+  const searching = !!normalizeStudentQuery(state.studentQuery);
+
   // 每个新条目的错峰延迟：按新条目在「渲染次序」里的序号递增，整体封顶
   // （人多时自动压缩间隔：新人越多，每一步越小，最后一条的延迟不超过 STAGGER_MAX_MS）
   const newCount = newSids.size;
@@ -2629,7 +2683,11 @@ function renderStudentList() {
     }
   }
 
-  container.innerHTML = sorted.map(s => {
+  if (visible.length === 0) {
+    // 有学号但一条都没匹配上 → 给出明确说明，而不是一片空白
+    container.innerHTML = `<div class="student-empty">没有匹配「${escapeHtml(state.studentQuery)}」的姓名或学号<br>（共 ${state.students.length} 人）</div>`;
+  } else {
+  container.innerHTML = visible.map(s => {
     const shiftCount = hasAssignments ? getStudentShiftCount(s.sid) : 0;
     const isNew = newSids.has(s.sid);
     const locked = isStudentLocked(s.sid);   // 学生锁（锁「人」，见 §4.9.1）
@@ -2656,17 +2714,95 @@ function renderStudentList() {
       </span>
     </div>
   `}).join('');
-
-  if (hasAssignments) {
-    const totalShifts = getTotalShiftCount();
-    count.textContent = `共 ${state.students.length} 人 · 总排班 ${totalShifts} 次`;
-  } else {
-    count.textContent = `共 ${state.students.length} 人`;
   }
+
+  // 计数文案：搜索时同时给出「共 N 人 / 筛出 M 人」，避免用户以为学号被删了（见 §4.15）
+  const totalTxt = hasAssignments
+    ? `共 ${state.students.length} 人 · 总排班 ${getTotalShiftCount()} 次`
+    : `共 ${state.students.length} 人`;
+  count.textContent = searching ? `${totalTxt} · 筛出 ${visible.length} 人` : totalTxt;
+
+  // 「清除」按钮：有搜索词时才显示
+  const clearBtn = document.getElementById('studentSearchClear');
+  if (clearBtn) clearBtn.hidden = !searching;
 
   // 已渲染过的学号记为「播过动画」；顺带把已移除的人丢掉，
   // 这样同一个人被删掉后重新导入仍会正常播放入场动画（也避免集合无限增长）。
   _animatedSids = new Set(state.students.map(s => s.sid));
+}
+
+// ============================================================
+//  学号列表搜索（纯视图过滤，见 §4.15）
+// ============================================================
+/*
+ * 口径（用户确认）：
+ *   · 对**姓名**与**学号**做不区分大小写的子串匹配，任一命中即显示；
+ *   · 只过滤左侧列表的**显示**——不参与排班、抓课表、导出，也不改动 state.students；
+ *   · 首尾空白忽略；空查询词 = 不过滤。
+ * 因此 fetchAllSchedules()、runSchedule()、export* 都继续遍历完整的 state.students。
+ */
+
+/** 规范化搜索词：去首尾空白 + 转小写（空串表示不过滤） */
+function normalizeStudentQuery(raw) {
+  return String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+}
+
+/** 单个学生是否命中搜索词（空查询词 → 全部命中） */
+function studentMatchesQuery(student, query) {
+  const q = normalizeStudentQuery(query);
+  if (!q) return true;
+  const sid = String(student.sid || '').toLowerCase();
+  const name = String(student.name || '').toLowerCase();
+  return sid.includes(q) || name.includes(q);
+}
+
+/** 按当前（或指定）搜索词过滤学生列表，保持传入顺序 */
+function filterStudentsByQuery(students, query) {
+  const q = normalizeStudentQuery(query === undefined ? state.studentQuery : query);
+  if (!q) return [...students];
+  return students.filter(s => studentMatchesQuery(s, q));
+}
+
+/** 某学号当前是否显示在左侧列表里（搜索过滤后可能被隐藏） */
+function isStudentVisible(sid) {
+  const s = state.students.find(st => st.sid === sid);
+  return !!s && studentMatchesQuery(s, state.studentQuery);
+}
+
+/** 输入框内容变化：更新查询词并重渲染列表（不碰 state.students） */
+function setStudentQuery(value) {
+  state.studentQuery = String(value === undefined || value === null ? '' : value);
+  renderStudentList();
+}
+
+/** 清除搜索：清空输入框、查询词并重渲染；同时隐藏「清除」按钮 */
+function clearStudentQuery() {
+  state.studentQuery = '';
+  const input = document.getElementById('studentSearch');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('studentSearchClear');
+  if (clearBtn) clearBtn.hidden = true;
+  renderStudentList();
+}
+
+/** 搜索框键盘：Esc 清除搜索（与「点 × 清除」等价） */
+function onStudentSearchKeydown(event) {
+  if (!event) return;
+  if (event.key === 'Escape') {
+    if (normalizeStudentQuery(state.studentQuery)) {
+      clearStudentQuery();
+      if (event.stopPropagation) event.stopPropagation();   // 别把 Esc 透给全局（否则会去关弹窗）
+    }
+  }
+}
+
+/** 只读默认值：搜索词同样不持久化（见 §7.3），每次打开都是「不过滤」 */
+function loadStudentQuery() {
+  state.studentQuery = '';
+  const input = document.getElementById('studentSearch');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('studentSearchClear');
+  if (clearBtn) clearBtn.hidden = true;
 }
 
 function statusLabel(status) {
@@ -2683,10 +2819,22 @@ function statusLabel(status) {
  * 这里就地更新姓名与状态徽标，顺序与统计都没变，所以不需要重排。
  *
  * 返回 false 表示这条不在 DOM 里（例如列表刚被清空），调用方回退到整列重渲染。
+ *
+ * 搜索（§4.15）带来的一个重要区分：**「被搜索过滤掉」不等于「不在 DOM 里」**。
+ * 若这条只是没通过筛选，返回 true（什么都不做）—— 否则 fetchAllSchedules() 的
+ * `.finally()` 会把每一张抓回来的课表都当成「列表坏了」而整列重渲染，
+ * 正在搜索的用户会看到列表反复闪烁。
  */
 function updateStudentListItem(sid) {
   const node = document.querySelector(`.student-item[data-sid="${sid}"]`);
-  if (!node) return false;
+  if (!node) {
+    // 没找到节点时区分两种情况：
+    //   · 这个人确实在名单里、只是被搜索过滤掉了 → 返回 true（什么都不用做，
+    //     调用方不该因此整列重渲染，否则正在搜索的用户会看到列表反复闪烁）；
+    //   · 名单里没有他，或他本该显示却不见了（列表真的坏了）→ 返回 false，让调用方回退整列重渲染。
+    const s = state.students.find(st => st.sid === sid);
+    return !!s && !isStudentVisible(sid);
+  }
   const student = state.students.find(s => s.sid === sid);
   if (!student) return false;
 
@@ -6145,6 +6293,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMaxShifts();          // 每人每周班次上限的数值 + 开关（见 §4.8）
   loadContinuousScheduling(); // 连续排班偏好（勾选=连班，不勾选=分散）
   loadLocks();              // 已锁定的排班位置
+  loadStudentQuery();       // 学号列表搜索词（只在内存，见 §4.15 / §7.3）
   syncMaxShiftsInput();     // 数值框 + 开关 + 说明文案
   syncContinuousInput();
   renderStudentList();

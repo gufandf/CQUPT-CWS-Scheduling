@@ -582,6 +582,126 @@ ok(inPlaceHtml.includes('status-ready') && inPlaceHtml.includes('已就绪'), '�
 ok(!inPlaceHtml.includes('status-loading'), '旧状态类被替换掉');
 eq(g("updateStudentListItem('2025999999')"), false, '条目不在 DOM 中时返回 false，调用方可回退整列重渲染');
 
+// ── L25c. 学号列表搜索（纯视图过滤，见 AGENT.md §4.15） ──
+section('L25c. 学号列表搜索：按姓名 / 学号过滤显示');
+
+ok(rawHtml().includes('id="studentSearch"'), '左侧面板存在搜索框 #studentSearch');
+ok(rawHtml().includes('oninput="setStudentQuery(this.value)"'), '搜索框的 oninput 接到 setStudentQuery');
+ok(rawHtml().includes('id="studentSearchClear"'), '存在「清除」按钮');
+// 搜索框必须在 #studentList **外面**：列表整段重写 innerHTML，放里面会丢焦点
+ok(rawHtml().indexOf('id="studentSearch"') < rawHtml().indexOf('id="studentList"'),
+   '搜索框在 DOM 中位于 #studentList 之前（不在会被整段重写的容器里）');
+ok(/\.student-search\s*\{/.test(rawHtml()), 'CSS 里有 .student-search 样式');
+
+// 准备一份含中英文姓名与学号的名单
+g(`state.students = [
+     {sid:'2025210001',name:'张三',status:'ready',courses:[]},
+     {sid:'2025210002',name:'李四',status:'ready',courses:[]},
+     {sid:'2025210003',name:'Alice',status:'ready',courses:[]},
+     {sid:'2025300004',name:'王五',status:'ready',courses:[]}
+   ];
+   state.studentQuery = ''; _animatedSids = new Set(state.students.map(s => s.sid));
+   renderStudentList();`);
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 4, '空查询词时渲染全部 4 人');
+
+// 按姓名匹配
+g("setStudentQuery('张')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 1, '按姓名子串过滤（张 → 1 人）');
+ok(el('studentList').innerHTML.includes('张三'), '命中的是张三');
+ok(!el('studentList').innerHTML.includes('李四'), '未命中的人不出现在列表里');
+
+// 按学号匹配
+g("setStudentQuery('2025300')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 1, '按学号子串过滤（2025300 → 1 人）');
+ok(el('studentList').innerHTML.includes('2025300004'), '命中的学号正确');
+
+// 大小写不敏感
+g("setStudentQuery('alice')");
+ok(el('studentList').innerHTML.includes('Alice'), '英文姓名不区分大小写（alice → Alice）');
+g("setStudentQuery('ALICE')");
+ok(el('studentList').innerHTML.includes('Alice'), '大写查询词同样命中');
+g("setStudentQuery('ali')");
+ok(el('studentList').innerHTML.includes('Alice'), '英文姓名支持子串匹配');
+
+// 多个命中
+g("setStudentQuery('2025')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 4, '学号公共前缀命中全部 4 人');
+
+// 首尾空白忽略
+g("setStudentQuery('  张三  ')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 1, '查询词首尾空白被忽略');
+
+// 无结果：给出明确提示，而不是一片空白
+g("setStudentQuery('不存在的人')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 0, '无匹配时不渲染任何条目');
+ok(el('studentList').innerHTML.includes('没有匹配'), '无匹配时给出「没有匹配」提示行');
+// 提示行里带上原始查询词，并把总数告诉用户（避免以为学号被删了）
+ok(el('studentList').innerHTML.includes('不存在的人'), '提示行里回显查询词');
+ok(el('studentList').innerHTML.includes('共 4 人'), '提示行里说明总人数');
+
+// 计数文案：搜索时同时给出总数与筛出数量
+g("setStudentQuery('张')");
+ok(String(el('studentCount').textContent).includes('共 4 人'), '搜索时计数仍显示总人数');
+ok(String(el('studentCount').textContent).includes('筛出 1 人'), '搜索时计数显示筛出数量');
+g("setStudentQuery('')");
+ok(!String(el('studentCount').textContent).includes('筛出'), '清空搜索后不再显示「筛出」');
+
+// 纯视图：过滤不改动 state.students
+g("setStudentQuery('张')");
+eq(g('state.students.length'), 4, '搜索不改动 state.students（纯视图过滤）');
+eq(g('filterStudentsByQuery(state.students).length'), 1, 'filterStudentsByQuery 只返回命中的子集');
+eq(g('filterStudentsByQuery(state.students, "").length'), 4, '空查询词返回全部');
+
+// 清除按钮：有查询词时显示、点了清空并复原列表
+g("setStudentQuery('张')");
+eq(el('studentSearchClear').hidden, false, '有查询词时「清除」按钮可见');
+g('clearStudentQuery()');
+eq(g('state.studentQuery'), '', 'clearStudentQuery 清空查询词');
+eq(el('studentSearch').value, '', 'clearStudentQuery 清空输入框');
+eq(el('studentSearchClear').hidden, true, '清空后「清除」按钮隐藏');
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 4, '清空搜索后恢复全部 4 人');
+
+// Esc 清搜索，且不把事件透给全局（否则会去关弹窗）
+g("setStudentQuery('张')");
+let escStopped = g(`(() => { const e = { key:'Escape', _s:false, stopPropagation(){ e._s = true; } }; onStudentSearchKeydown(e); return e._s; })()`);
+eq(escStopped, true, 'Esc 清搜索时阻止冒泡（不会顺带关掉弹窗）');
+eq(g('state.studentQuery'), '', 'Esc 清空了查询词');
+g("setStudentQuery('')");
+let escIdle = g(`(() => { const e = { key:'Escape', _s:false, stopPropagation(){ e._s = true; } }; onStudentSearchKeydown(e); return e._s; })()`);
+eq(escIdle, false, '没有查询词时 Esc 不做任何事（也不阻止冒泡）');
+
+// 动画记账：搜索只少渲染几条，不能因此重放整列入场动画
+g(`state.studentQuery = ''; _animatedSids = new Set(state.students.map(s => s.sid)); renderStudentList();`);
+g("setStudentQuery('张')");
+ok(!/is-new/.test(el('studentList').innerHTML),
+   '搜索过滤后，保留下来的条目不会被误标成「新出现」（不重放入场动画）');
+g("setStudentQuery('')");
+ok(!/is-new/.test(el('studentList').innerHTML), '清空搜索同样不重放动画');
+eq(g('_animatedSids.size'), 4, '_animatedSids 始终按完整名单记账（过滤不影响它）');
+
+// 就地更新与搜索共存：被过滤掉的人不算「不在 DOM」，否则刷新课表会让列表反复重渲染
+g("setStudentQuery('张')");
+eq(g("updateStudentListItem('2025210001')"), true, '命中筛选的条目就地更新返回 true');
+eq(g("updateStudentListItem('2025210002')"), true,
+   '被搜索过滤掉的条目返回 true（不算失败，避免 fetchAllSchedules 反复整列重渲染）');
+eq(g("updateStudentListItem('2025999999')"), false, '真的不在名单里的人仍返回 false');
+g('clearStudentQuery()');
+
+// 搜索不参与排班 / 抓课表 / 导出
+g("setStudentQuery('张')");
+eq(g('isStudentVisible("2025210001")'), true, '命中筛选的人 isStudentVisible 为 true');
+eq(g('isStudentVisible("2025210002")'), false, '被过滤的人 isStudentVisible 为 false');
+g('state.studentQuery = "";');
+ok(g('typeof runSchedule') === 'function' && !/studentQuery/.test(g('String(runSchedule)')),
+   'runSchedule 不读 studentQuery（搜索不影响自动排班）');
+ok(!/studentQuery/.test(g('String(fetchAllSchedules)')),
+   'fetchAllSchedules 不读 studentQuery（搜索不影响抓课表）');
+
+// 搜索词不持久化（§7.3）
+g("state.studentQuery = '张'; loadStudentQuery();");
+eq(g('state.studentQuery'), '', 'loadStudentQuery 一律回到「不过滤」（不读存档）');
+eq(JSON.stringify(g('localStorage._dump()')), '{}', '搜索词不写入 localStorage');
+
 section('L26. 分组只配单周 / 只配双周：合法配置，全链路可用');
 
 // 场景：工作日组只在单周排班，周末组照常每周——保存不再被拦截

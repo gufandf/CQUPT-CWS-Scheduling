@@ -116,6 +116,7 @@ API 端点：
 | `getMaxShiftsPerWeek()` / `maxShiftsLimit()` / `loadMaxShifts()` / `setMaxShiftsPerWeek()` / `setMaxShiftsEnabled()` / `syncMaxShiftsInput()` | 每人每周上限的读取、开关与界面同步（**不持久化**，见 §7.3）。**开关 `state.maxShiftsEnabled` 决定上限是否生效**（未勾选 = `Infinity`），数值 `0`/负数/非法回落默认值，见 §4.8 |
 | `openSidImport()` / `closeSidImport()` | 学号录入弹窗 `#sidImportModal` 的开关（入口是「文件」菜单 → 导入学号…）；`loadStudents()` 只读弹窗里的 `#sidInput` |
 | `renderStudentList()` / `updateStudentListItem()` / `_animatedSids` | 左侧学号列表的整列渲染 / **单条就地更新**，后者供刷新课表的逐条进度使用；`_animatedSids` 记录已播过入场动画的人，配合 `STAGGER_STEP_MS` / `STAGGER_MAX_MS` 逐条写 `--stagger-delay`，见 §4.13 第 4、5 条 |
+| `setStudentQuery()` / `clearStudentQuery()` / `filterStudentsByQuery()` / `normalizeStudentQuery()` / `studentMatchesQuery()` / `isStudentVisible()` / `loadStudentQuery()` | 学号列表搜索（**纯视图过滤**，按姓名 / 学号子串匹配），见 §4.15 |
 | `isContinuousScheduling()` / `setContinuousScheduling()` / `loadContinuousScheduling()` | 「连续排班」开关的读写（**不持久化**，见 §7.3），见 §4.10 |
 | `makeContinuityContext()` / `continuityScoreOf()` / `continuityGainOf()` / `totalContinuityScore()` | 连续 / 分散判分（同一天连班 + 相邻天），见 §4.10 |
 | `optimizeContinuity()` | 保负载的「换人」局部搜索：勾选则尽量连续，不勾选则尽量分散，见 §4.10 |
@@ -679,6 +680,48 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 > 「关于」弹窗的数据存储行）只用一句「不自动保留（见注意事项/见上文）」带过即可。
 > 反复用「⚠ 重要」「一切归零」这类重语气会让人以为程序有缺陷，反而稀释了真正该注意的那条。
 
+### 4.15 学号列表搜索是「纯视图过滤」，绝不能改写 `state.students`
+
+左侧学号列表上方的搜索框（`#studentSearch`，`setStudentQuery()`）按**姓名或学号**做
+不区分大小写的子串匹配，口径与三条约束：
+
+1. **纯视图**：只影响左侧列表**显示什么**。`state.students` 一个元素都不增不减，
+   `runSchedule()` 的池子、`fetchAllSchedules()` 的请求范围、`export*` 的导出内容
+   一律继续用**完整名单**。搜索期间被隐藏的同学**照常参与排班、照常被抓课表、照常出现在导出里**。
+   > 用户原话确认过这一点：搜索是「找人」，不是「筛选数据」。
+   > 因此**不要**在 `runSchedule` / `fetchAllSchedules` / 导出里加 `studentQuery` 判断。
+2. **匹配口径**：`normalizeStudentQuery()` 去首尾空白并转小写；`studentMatchesQuery()`
+   对 `sid` 与 `name` 各做一次 `includes`，任一命中即显示。空查询词 = 全部显示。
+3. **过滤发生在排序之后**：先按班次数量降序排好 `sorted`，再 `filterStudentsByQuery(sorted)`，
+   所以筛选结果的相对顺序与不过滤时一致。
+
+四个必须守住的实现细节（前两条是这次踩过的坑）：
+
+1. **搜索框必须在 `#studentList` 外面。** `renderStudentList()` 每次都整段重写
+   `container.innerHTML`，输入框若放进列表里会被反复重建、**每次按键都丢焦点**
+   （与 §4.13 第 4 条同一类问题）。现在它是 `#studentList` 的兄弟节点。
+2. **`updateStudentListItem()` 必须区分「被过滤掉」与「真的不在 DOM」。**
+   它原先 `if (!node) return false`，而 `fetchAllSchedules()` 的 `.finally()` 把 `false`
+   当作「列坏了」去整列重渲染 —— 搜索状态下每抓回一张课表就会重写整列、列表反复闪烁。
+   现在的口径：节点找不到时，**若这个人在名单里、只是被搜索隐藏了 → 返回 `true`（什么都不做）**；
+   真不在名单里、或本该显示却不见了 → 返回 `false`。
+3. **过滤不能影响入场动画记账。** `newSids` / `_animatedSids` / 错峰延迟一律按
+   **完整名单**算，过滤只发生在最后的渲染映射上。否则「搜索一下」会让保留下来的条目
+   被误判成「新出现」而重放整列 `slideInFromLeft`（§4.13 第 4、5 条）。
+4. **无结果要给提示，不能一片空白**：渲染 `.student-empty` 行，回显查询词并说明总人数
+   （「没有匹配「zzz」的姓名或学号（共 6 人）」）；`#studentCount` 在搜索时同时给出
+   「共 N 人 · 筛出 M 人」，避免用户以为学号被删了。
+
+配套：搜索词存在 `state.studentQuery`，**不持久化**（§7.3，`loadStudentQuery()` 置空），
+`clearStudentQuery()` 与搜索框里的 × / Esc 等价；Esc 会 `stopPropagation()`，
+否则会继续冒到全局 Keydown 处理里顺手关掉弹窗。
+
+测试见 `.selftest/test-layout.js` §L25c：静态接线与 DOM 位置、姓名 / 学号 / 大小写 / 子串 /
+空白 / 多命中的匹配口径、无结果提示与计数文案、纯视图（不改 `state.students`）、
+清除按钮与 Esc、动画记账不被过滤干扰、`updateStudentListItem` 的两种「找不到」、
+以及搜索不影响 `runSchedule` / `fetchAllSchedules` 且不写入 localStorage。
+（已用注入 bug 的方式确认：让过滤失效会红 9 条，让搜索改写 `state.students` 会红 20 条。）
+
 ---
 
 ## 5. 测试
@@ -698,7 +741,7 @@ test-integration.js     排班、剪枝、渲染、导出、导入往返、每�
                                 导入模板文件立即生效并自动开编辑器（§49，见 §4.12）
 test-layout.js          排班日分组（预设/自定义、模式往返、动态渲染与导出、未排班时的表格、
                                 分组只排单周/双周）、学号列表入场动画（只播一次 + 逐条错峰 + 就地更新，
-                                §L25b，见 §4.13）
+                                §L25b，见 §4.13）、学号列表搜索（§L25c，纯视图过滤，见 §4.15）
 run-all.sh              入口
 ```
 
