@@ -448,6 +448,24 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
 }
 .student-item .remove-btn:hover { color: var(--danger); background: var(--danger-light); }
 
+/* ── 学号列表上的锁定（锁「人」，见 §4.9.1） ──────────────
+   与值班表里的位置锁（§4.9）是两回事：那个锁的是「该同学 + 该班次」这个位置，
+   这个锁的是「这个人」——自动排班既不添加也不修改他的任何班次。
+   配色沿用位置锁的琥珀色，让用户一眼认出「这块被锁住了」。 */
+.student-item .lock-btn {
+  cursor: pointer; width: 24px; height: 24px; font-size: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: var(--text-muted);
+  transition: all var(--transition);
+}
+.student-item .lock-btn:hover { color: var(--warning); background: var(--warning-light); }
+.student-item.locked { background: var(--warning-light); box-shadow: inset 3px 0 0 0 var(--warning); }
+.student-item.locked:hover { background: var(--warning-light); box-shadow: inset 3px 0 0 0 var(--warning); }
+.student-item.locked .lock-btn { color: var(--warning); }
+.student-item.locked .lock-btn:hover { background: rgba(217,119,6,.16); }
+/* 锁图标比 × 稍大一点才看得清（内联 SVG 的 width/height 由 JS 写入） */
+.student-item .lock-btn svg { width: 13px; height: 13px; }
+
 .status {
   font-size: 11px; font-weight: 600; padding: 2px 8px;
   border-radius: 10px; white-space: nowrap;
@@ -1594,10 +1612,16 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
           <strong>不勾选</strong>（默认）＝反过来尽量分散，避免连班、也避免连着几天都排同一个人。
           这项只是「尽量」的偏好：算法只做<b>不改变任何人班次数</b>的等价交换，因此在满足它的同时
           不会破坏「尽量让每人班次数相近」这条均衡性。</p>
-        <p><strong>5. 排班锁定</strong>：点学生标签上的<strong>锁图标</strong>可锁住
+        <p><strong>5. 排班锁定</strong>（两种，互为补充）：<br>
+          · <strong>锁位置</strong>：点学生标签上的<strong>锁图标</strong>可锁住
           <strong>「该同学 + 该班次」这个位置</strong>——锁定后无论怎么重新排班都不会改变它。
           锁定的标签显示为琥珀色、不能拖动也不能移除（先解锁再操作）；
-          该同学在<strong>其它</strong>班次仍可被正常安排。锁定会随「导出/导入数据」一起保存。</p>
+          该同学在<strong>其它</strong>班次仍可被正常安排。<br>
+          · <strong>锁人</strong>：点左侧学号列表每行的<strong>锁图标</strong>可锁定这位同学，
+          锁定后自动排班对他<strong>既不添加、也不修改</strong>——现有的班次原样冻结，也不会被派到新班次
+          （适合「课表还没更新、先别动他」的情况）；他在右侧表格里的标签仍可手动拖动、移除。
+          左边锁定的同学会显示为琥珀色。<br>
+          两种锁定都会随「导出/导入数据」一起保存。</p>
         <p><strong>6. 课表管理</strong>：点击学生姓名查看课表，可<strong>忽略</strong>特定课程后重新排班。</p>
         <p><strong>7. 值班模板</strong>：顶部<b>「文件」菜单 → 编辑值班模板…</b>可自定义每个班次的<strong>值班时间、值班人数、单双周</strong>，
           自由<strong>添加/删除/排序</strong>班次，并单独设置与该时段<strong>冲突的课程节次</strong>。<br>
@@ -2117,6 +2141,8 @@ const state = {
   // 锁定的排班：{ odd: { [shiftKey]: [sid, ...] }, even: {...} }
   // 锁住的是「该同学 + 该班次」这个位置，重新排班（runSchedule）不会改变它
   locks: { odd: {}, even: {} },
+  // 「学号列表上锁定」的学号：自动排班既不添加、也不修改这些同学的班次（见 §4.9.1）
+  studentLocks: [],
   currentCourseModalSid: null  // 当前打开课表弹窗的学生学号
 };
 
@@ -2461,6 +2487,7 @@ function clearAll() {
     state.students = [];
     state.assignments = { odd: {}, even: {} };
     state.locks = { odd: {}, even: {} };
+    state.studentLocks = [];   // 人都没了，学生锁自然一并清空
     persistLocks();
     renderStudentList();
     refreshView();
@@ -2479,6 +2506,7 @@ function removeStudent(sid) {
   }
   // 人已移除，其锁定记录一并清除，避免残留指向不存在的人
   dropLocksOfStudent(sid);
+  dropStudentLock(sid);
   persistLocks();
   renderStudentList();
   refreshView();
@@ -2573,14 +2601,15 @@ function renderStudentList() {
   container.innerHTML = sorted.map(s => {
     const shiftCount = hasAssignments ? getStudentShiftCount(s.sid) : 0;
     const isNew = newSids.has(s.sid);
+    const locked = isStudentLocked(s.sid);   // 学生锁（锁「人」，见 §4.9.1）
     // 延迟用 CSS 变量逐条写入：只给真正要播动画的新条目，老条目不产生内联动画样式
     const stagger = isNew && step > 0
       ? ` style="--stagger-delay:${delayOfNewSid.get(s.sid)}ms"`
       : '';
     return `
-    <div class="student-item${isNew ? ' is-new' : ''}"${stagger} onclick="showStudentCourse('${s.sid}')"
-         title="点击查看课表 | 拖拽到值班表"
-         draggable="true" data-sid="${s.sid}"
+    <div class="student-item${isNew ? ' is-new' : ''}${locked ? ' locked' : ''}"${stagger} onclick="showStudentCourse('${s.sid}')"
+         title="${locked ? '已锁定：重新排班不会添加或修改他的班次（点锁图标解锁）' : '点击查看课表 | 拖拽到值班表'} | 点锁图标可锁定"
+         draggable="true" data-sid="${s.sid}"${locked ? ' data-locked="1"' : ''}
          ondragstart="onStudentDragStart(event)"
          ondragend="onStudentDragEnd(event)"
          onmouseenter="highlightStudent('${s.sid}', true)"
@@ -2590,6 +2619,8 @@ function renderStudentList() {
       <span class="meta">
         ${hasAssignments ? `<span class="shift-badge">${shiftCount}</span>` : ''}
         <span class="status status-${s.status}">${statusLabel(s.status)}</span>
+        <span class="lock-btn" onclick="event.stopPropagation();toggleStudentLock('${s.sid}')"
+              title="${locked ? '已锁定：重新排班不会添加或修改他的班次（点击解锁）' : '锁定该同学：重新排班不添加也不修改他的班次'}">${locked ? LOCK_ICON_CLOSED : LOCK_ICON_OPEN}</span>
         <span class="remove-btn" onclick="event.stopPropagation();removeStudent('${s.sid}')" title="移除">×</span>
       </span>
     </div>
@@ -2942,6 +2973,7 @@ function pruneInvalidAssignments(tpl) {
   }
   // 排班被丢弃后，指向已消失槽位的锁定记录也要清理，避免残留脏数据
   pruneLocks();
+  pruneStudentLocks();
   return dropped;
 }
 
@@ -2971,12 +3003,30 @@ function isLocked(sid, key, weekType) {
   return Array.isArray(list) && list.includes(sid);
 }
 
-/** 某个槽位里被锁定的学号列表 */
+/** 某个槽位里被锁定的学号列表（位置锁） */
 function lockedSidsOf(key, weekType) {
   const wt = weekType || state.currentWeek;
   const bucket = state.locks && state.locks[wt];
   const list = bucket && bucket[key];
   return Array.isArray(list) ? list.slice() : [];
+}
+
+/**
+ * 某个槽位里「自动排班必须原样保留」的学号列表 —— 位置锁与学生锁的并集。
+ * 排班算法只看这一个口径，不要各写一份（见 §4.9 / §4.9.1）。
+ *
+ * `assignments` 传当前排班表：学生锁的成员是从**槽位现有内容**里挑出来的，
+ * 因此他只会留在原本就待着的格子，不会凭空出现在别处。
+ */
+function keptSidsOf(key, weekType, assignments, stuLockedSet) {
+  const wt = weekType || state.currentWeek;
+  const locked = stuLockedSet || studentLockedSet();
+  const kept = lockedSidsOf(key, wt);
+  const slot = (assignments && assignments[wt] && assignments[wt][key]) || [];
+  for (const sid of slot) {
+    if (locked.has(sid) && !kept.includes(sid)) kept.push(sid);
+  }
+  return kept;
 }
 
 /**
@@ -3065,6 +3115,100 @@ function persistLocks() {}
 
 function loadLocks() {
   state.locks = { odd: {}, even: {} };
+  state.studentLocks = [];   // 学生锁同样不持久化，见 §4.9.1 / §7.3
+}
+
+// ============================================================
+//  学生级锁定（学号列表上的锁，见 §4.9.1）
+// ============================================================
+// 与上面「位置锁」的区别：
+//   · 位置锁（state.locks）锁的是「该同学 + 该班次」这一个格子；
+//   · 学生锁（state.studentLocks）锁的是「这个人」——自动排班对他**既不添加也不修改**，
+//     也就是把他现有的所有班次整体冻结，且不再往别处加派。
+// 两套锁定互不干扰，可以同时存在。
+
+/** 该学号是否被锁定（自动排班不添加也不修改他的班次） */
+function isStudentLocked(sid) {
+  return Array.isArray(state.studentLocks) && state.studentLocks.includes(sid);
+}
+
+/** 当前被锁定的学号集合（热循环里 O(1) 查表用） */
+function studentLockedSet() {
+  return new Set(Array.isArray(state.studentLocks) ? state.studentLocks : []);
+}
+
+/**
+ * 切换某个学号的「学生锁」，返回切换后是否处于锁定。
+ * 界面上由左侧学号列表里的锁按钮调用。
+ *
+ * 锁定只是**冻结现状**，不负责把该同学现在的班次写进 `state.locks`：
+ * 每次重新排班（runSchedule）都会用 `initAssignments()` 按当前排班快照回填。
+ */
+function toggleStudentLock(sid) {
+  if (!Array.isArray(state.studentLocks)) state.studentLocks = [];
+  const i = state.studentLocks.indexOf(sid);
+  let locked;
+  if (i === -1) {
+    state.studentLocks.push(sid);
+    locked = true;
+  } else {
+    state.studentLocks.splice(i, 1);
+    locked = false;
+  }
+  persistLocks();
+  renderStudentList();   // 立刻反映锁图标与配色
+  showToast(locked
+    ? '已锁定该同学：重新排班时不会添加或修改他的班次'
+    : '已解锁该同学：可以重新参与自动排班', locked ? 'success' : 'info');
+  return locked;
+}
+
+/** 规范化学生锁（任何外部来源都必须经过它） */
+function normalizeStudentLocks(raw) {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter(s => typeof s === 'string' && s))];
+}
+
+/**
+ * 清理失效的学生锁：已不在学生名单里的一律丢弃。
+ * **学生列表为空时不做这个判断**，与 `pruneLocks()` 同理 —— 否则刚打开页面
+ * （还没导入学号）就会把导入数据里带回来的锁定全部清掉。
+ */
+function pruneStudentLocks() {
+  if (!Array.isArray(state.studentLocks)) { state.studentLocks = []; return 0; }
+  if (state.students.length === 0) return 0;
+  const known = new Set(state.students.map(s => s.sid));
+  const before = state.studentLocks.length;
+  state.studentLocks = state.studentLocks.filter(sid => known.has(sid));
+  return before - state.studentLocks.length;
+}
+
+/** 解除某个学号的学生锁（移除同学 / 清空数据时用） */
+function dropStudentLock(sid) {
+  if (!Array.isArray(state.studentLocks)) { state.studentLocks = []; return; }
+  state.studentLocks = state.studentLocks.filter(s => s !== sid);
+}
+
+/**
+ * 把「学生锁」翻译成一份完整的排班快照：{ odd: { [key]: [sid,...] }, even: {...} }。
+ *
+ * 这是任务一的核心：`initAssignments()` 会用这份快照回填槽位，
+ * 于是被锁同学**现有的每一个班次**都原地保留 —— 既不会被换人、也不会被清空，
+ * 等价于自动地为他现有的每个位置都加了一把「位置锁」。
+ * 只保留当前模板里真实存在的班次（陈旧键交给 pruneInvalidAssignments 处理）。
+ */
+function lockedStudentAssignments() {
+  const snap = { odd: {}, even: {} };
+  if (!Array.isArray(state.studentLocks) || state.studentLocks.length === 0) return snap;
+  const locked = studentLockedSet();
+  for (const weekType of ['odd', 'even']) {
+    const bucket = state.assignments[weekType] || {};
+    for (const key of Object.keys(bucket)) {
+      const kept = (bucket[key] || []).filter(sid => locked.has(sid));
+      if (kept.length > 0) snap[weekType][key] = kept;
+    }
+  }
+  return snap;
 }
 
 // ============================================================
@@ -3074,8 +3218,16 @@ function loadLocks() {
 /**
  * 按当前模板重建所有槽位（会清空已有排班，但**锁定的位置原样保留**）。
  * 这是「锁定后不受两种自动排班影响」的第一道保证。
+ *
+ * 两类锁定都在这里回填（见 §4.9 / §4.9.1）：
+ *   1. 位置锁 `state.locks`：该同学 + 该班次；
+ *   2. 学生锁 `state.studentLocks`：该同学**当前所在的所有班次**（用重建前的排班快照）。
+ * 学生锁必须从**快照**回填，因为下面马上就把 `state.assignments` 整个换掉了。
  */
 function initAssignments() {
+  // 先取「被锁同学当前所在位置」的快照 —— 必须在重建之前取
+  const lockedSnap = lockedStudentAssignments();
+
   const next = { odd: {}, even: {} };
   for (const weekType of ['odd', 'even']) {
     for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
@@ -3091,6 +3243,17 @@ function initAssignments() {
     for (const key of Object.keys(bucket)) {
       if (!Array.isArray(next[weekType][key])) continue;
       next[weekType][key] = [...bucket[key]];
+    }
+  }
+  // 学生锁：把他的现有班次也原地放回（与位置锁合并，去重）
+  for (const weekType of ['odd', 'even']) {
+    for (const key of Object.keys(lockedSnap[weekType])) {
+      if (!Array.isArray(next[weekType][key])) continue;   // 班次已不在模板里 → 交给剪枝清理
+      const merged = next[weekType][key].slice();
+      for (const sid of lockedSnap[weekType][key]) {
+        if (!merged.includes(sid)) merged.push(sid);
+      }
+      next[weekType][key] = merged;
     }
   }
   state.assignments = next;
@@ -3402,6 +3565,10 @@ function collectShiftsForWeek(weekType) {
  *
  * **锁定优先**：槽位里已锁定的成员原样保留（既不换人也不清空），
  * 只把剩余名额按常规规则分配给其他同学；锁定成员照常计入负载，保证均衡口径不失真。
+ *
+ * 这里的「锁定」包含两类（见 §4.9 / §4.9.1）：
+ *   · 位置锁 `state.locks`：该同学 + 该班次；
+ *   · 学生锁 `state.studentLocks`：该同学现有的每一个班次都原地冻结（不添加、不修改）。
  */
 function fillWeekGreedy(assignments, students, sids, weekType, cap) {
   const load = {};
@@ -3413,13 +3580,16 @@ function fillWeekGreedy(assignments, students, sids, weekType, cap) {
   const occ = {};
   for (const sid of sids) occ[sid] = new Set();
 
+  // 被「学生锁」锁住的学号：既不进候选池，也不离开他现有的位置
+  const stuLocked = studentLockedSet();
+
   // 先把「已锁定」的既有人数计入负载，否则锁定的人会被当成没排班、反复被加派。
   // 只统计当前模板里真实存在的班次，避免残留的失效锁定键虚增负载。
   for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
     for (const shift of getShiftsForDay(dayIdx)) {
       if (!shiftAppliesToWeek(shift, weekType)) continue;
       const key = generateShiftKey(weekType, dayIdx, shift.id);
-      for (const sid of lockedSidsOf(key, weekType)) {
+      for (const sid of keptSidsOf(key, weekType, assignments, stuLocked)) {
         if (load[sid] !== undefined) {
           load[sid]++;
           occ[sid].add(occupiedSlotKey(dayIdx, shift.id));
@@ -3432,7 +3602,7 @@ function fillWeekGreedy(assignments, students, sids, weekType, cap) {
     const key = generateShiftKey(weekType, dayIdx, shift.id);
 
     // ① 锁定的位置原地保留（即便超出容量也不动它，锁定是用户显式意愿）
-    const kept = lockedSidsOf(key, weekType);
+    const kept = keptSidsOf(key, weekType, assignments, stuLocked);
     // ② 剩余名额才交给算法
     const remaining = Math.max(0, shift.capacity - kept.length);
 
@@ -3441,6 +3611,7 @@ function fillWeekGreedy(assignments, students, sids, weekType, cap) {
     const candidates = [];
     for (const sid of sids) {
       if (kept.includes(sid)) continue;   // 已在锁定位上，不重复占名额
+      if (stuLocked.has(sid)) continue;   // 学生锁：不往任何其它班次添加他
       const student = students.find(s => s.sid === sid);
       if (!canTakeShift(student, weekType, dayIdx, shift)) continue;
       if (cap !== Infinity && load[sid] >= cap) continue;
@@ -3551,6 +3722,9 @@ function optimizeBalance(assignments, students, sids, cap, maxRounds) {
   const tracker = makeLoadTracker(assignments, sids);
   const rounds = maxRounds === undefined ? 60 : maxRounds;
 
+  // 被「学生锁」锁住的学号：不能当 heavy 换出，也不能被换进别的槽位（不添加）
+  const stuLocked = studentLockedSet();
+
   // ── 预处理：每个槽位可排的学生（只算一次，避免热循环里反复判课程冲突） ──
   const eligible = {};
   for (const wt of ['odd', 'even']) {
@@ -3558,6 +3732,8 @@ function optimizeBalance(assignments, students, sids, cap, maxRounds) {
       const info = resolveShift(key);
       if (!info || !shiftAppliesToWeek(info.shift, wt)) continue;
       eligible[key] = sids.filter(sid =>
+        // 学生锁：不把他换进任何槽位（不添加），见 §4.9.1
+        !stuLocked.has(sid) &&
         canTakeShift(students.find(s => s.sid === sid), wt, info.dayIdx, info.shift));
     }
   }
@@ -3581,6 +3757,8 @@ function optimizeBalance(assignments, students, sids, cap, maxRounds) {
           if (tracker.total[heavy] === undefined) continue;
           // 锁定的位置不动：既不换人也不换位（均衡搜索必须跳过）
           if (isLocked(heavy, key, wt)) continue;
+          // 学生锁：他现有的每个班次都冻结，不能作为 heavy 换出
+          if (stuLocked.has(heavy)) continue;
           const h = tracker.week[wt][heavy], H = tracker.total[heavy];
 
           for (const light of order) {
@@ -3631,6 +3809,8 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
   const rounds = maxRounds === undefined ? 12 : maxRounds;
   const studentBySid = {};
   for (const s of students) studentBySid[s.sid] = s;
+  // 被「学生锁」锁住的学号：不能参与任何交换（不添加也不离开现有位置，见 §4.9.1）
+  const stuLocked = studentLockedSet();
   let moved = 0;
 
   for (const wt of ['odd', 'even']) {
@@ -3647,6 +3827,7 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
         key, slot,
         cell: occupiedSlotKey(info.dayIdx, info.shift.id),
         eligible: new Set(sids.filter(sid =>
+          !stuLocked.has(sid) &&
           canTakeShift(studentBySid[sid], wt, info.dayIdx, info.shift)))
       });
     }
@@ -3679,6 +3860,7 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
           for (const a of A.slot) {
             // 锁定的位置原地不动：本人不能离开 A，也不能被塞进锁定的 B
             if (isLocked(a, A.key, wt) || isLocked(a, B.key, wt)) continue;
+            if (stuLocked.has(a)) continue;        // 学生锁：不参与交换
             if (B.slot.includes(a)) continue;      // a 已在 B 里，换过去会重复
             if (!B.eligible.has(a)) continue;      // a 换到 B 有课
             occ[a].delete(A.cell); occ[a].add(B.cell);
@@ -3691,6 +3873,7 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
           const candB = [];
           for (const b of B.slot) {
             if (isLocked(b, B.key, wt) || isLocked(b, A.key, wt)) continue;
+            if (stuLocked.has(b)) continue;        // 学生锁：不参与交换
             if (A.slot.includes(b)) continue;
             if (!A.eligible.has(b)) continue;      // b 换到 A 有课
             occ[b].delete(B.cell); occ[b].add(A.cell);
@@ -4364,10 +4547,12 @@ function removeFromShift(key, sid) {
 }
 
 function resetSchedule() {
-  showConfirm('重置排班', '确定要重置所有排班吗？所有锁定也会一并清除。此操作不可撤销。', () => {
+  showConfirm('重置排班', '确定要重置所有排班吗？所有锁定（含学号列表上的锁定）也会一并清除。此操作不可撤销。', () => {
     state.assignments = { odd: {}, even: {} };
     // 排班都没了，锁定位置自然不复存在，必须一起清掉（否则会残留指向空槽位的锁定）
     state.locks = { odd: {}, even: {} };
+    // 学生锁同理：它冻结的是「现有班次」，班次清空后继续锁着只会让该同学一个班都排不到
+    state.studentLocks = [];
     persistLocks();
     renderStudentList();
     refreshView();   // 清空后仍然显示模板时段表格（全部为 0/N）
@@ -4933,7 +5118,9 @@ function exportData() {
       };
     }),
     assignments: state.assignments,
-    locks: state.locks
+    locks: state.locks,
+    // 学号列表上「锁人不锁位置」的锁定（见 §4.9.1）；旧文件无此字段 → 视为无人被锁
+    studentLocks: state.studentLocks
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5003,6 +5190,8 @@ function handleImportFile(event) {
         ? data.assignments : { odd: {}, even: {} };
       // 恢复锁定（旧文件无此字段 → 视为全部未锁定）
       state.locks = normalizeLocks(data.locks);
+      // 恢复「学生锁」（旧文件无此字段 → 视为无人被锁，见 §4.9.1）
+      state.studentLocks = normalizeStudentLocks(data.studentLocks);
       // 若模板 id 在规范化时被改名，同步迁移排班键，避免排班被误判为失效而清除
       remapAssignmentIds(_idRemap);
       pruneInvalidAssignments();

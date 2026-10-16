@@ -1,5 +1,5 @@
 // 集成测试：排班 / 剪枝 / 渲染 / 导出 / 导入 全链路
-const { g, ok, eq, section, summary, localStorage, el, document, writeFiles, rawHtml } = require('./harness.js');
+const { g, ok, eq, section, summary, localStorage, el, document, writeFiles, rawHtml, sandbox } = require('./harness.js');
 
 // ── 构造学生课表数据 ──
 const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
@@ -1794,7 +1794,216 @@ Promise.resolve(run).then(() => {
   eq(g('getTheme()'), 'auto', 'applyTheme("auto") 后回到跟随系统');
   eq(JSON.stringify(g('localStorage._dump()')), '{}', '主题切换同样不写入 localStorage');
 
-  summary();
+  // ── 47. 学生锁：学号列表上的锁定（锁「人」而非「位置」，见 AGENT.md §4.9.1） ──
+  // 语义（用户确认）：锁定后该同学**不参与自动排班** —— 既不把新班次加给他，
+  // 也不改动他现有的任何班次。与 §41 的位置锁是两套独立数据，互不干扰。
+  section('47. 学生锁：自动排班不添加也不修改被锁同学的班次');
+
+  const lockSrc = rawHtml();
+  ['toggleStudentLock', 'isStudentLocked', 'normalizeStudentLocks', 'pruneStudentLocks',
+   'dropStudentLock', 'lockedStudentAssignments', 'keptSidsOf'].forEach(fn => {
+    ok(lockSrc.includes(`function ${fn}`), `源码里定义了 ${fn}（学生锁的一部分）`);
+  });
+  ok(lockSrc.includes('id="studentList"') && lockSrc.includes('lock-btn'),
+     '学号列表渲染出锁按钮');
+  ok(/\.student-item\.locked\s*\{/.test(lockSrc), 'CSS 里有 .student-item.locked 样式');
+
+  // 规范化：外部来源一律过滤
+  eq(g('normalizeStudentLocks(undefined)'), [], 'normalizeStudentLocks(undefined) → 空数组（兼容旧文件）');
+  eq(g('normalizeStudentLocks(null)'), [], 'normalizeStudentLocks(null) → 空数组');
+  eq(g('normalizeStudentLocks(["A","A",1,"",null,"B"])'), ['A', 'B'], 'normalizeStudentLocks 去重并丢弃非字符串');
+
+  // 切换开关
+  g('state.students = [{sid:"A",name:"A",status:"ready",courses:[],rawCourses:[]}]; state.studentLocks = [];');
+  eq(g('isStudentLocked("A")'), false, '默认未锁定');
+  g('toggleStudentLock("A")');
+  eq(g('JSON.stringify(state.studentLocks)'), '["A"]', 'toggleStudentLock 把学号写进 state.studentLocks');
+  eq(g('isStudentLocked("A")'), true, '切换后 isStudentLocked 为 true');
+  // 渲染层：该条带 locked 类与闭合锁图标
+  g('renderStudentList()');
+  const listHtml = el('studentList').innerHTML;
+  ok(/class="student-item[^"]*\blocked\b/.test(listHtml), '锁定的学号条目带 locked 类');
+  ok(listHtml.includes('data-locked="1"'), '锁定的学号条目标记 data-locked="1"');
+  ok(listHtml.includes('lock-btn'), '学号条目渲染出 lock-btn');
+  g('toggleStudentLock("A")');
+  eq(g('JSON.stringify(state.studentLocks)'), '[]', '再次切换即解锁');
+  g('renderStudentList()');
+  ok(!/class="student-item[^"]*\blocked\b/.test(el('studentList').innerHTML),
+     '解锁后条目不再带 locked 类');
+
+  // ── 确定性用例 1：被锁同学不会被「添加」进任何班次 ──
+  g(`state.template = makeDefaultTemplate();
+     state.students = [
+       {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+       {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]},
+       {sid:'C',name:'C',status:'ready',courses:[],rawCourses:[]}
+     ];
+     state.locks = { odd:{}, even:{} };
+     state.studentLocks = ['A'];
+     state.assignments = { odd:{}, even:{} };
+     initAssignments();
+     fillWeekGreedy(state.assignments, state.students, ['A','B','C'], 'odd', Infinity);`);
+  eq(g(`weeklyLoadOf(state.assignments, 'odd', 'A')`), 0,
+     '被锁同学当前没有任何班次时，贪心一也不会给他添加（不添加）');
+  ok(g(`weeklyLoadOf(state.assignments, 'odd', 'B') + weeklyLoadOf(state.assignments, 'odd', 'C') > 0`),
+     '锁定个别人不影响其它同学照常排班');
+
+  // ── 确定性用例 2：被锁同学现有的班次原样冻结 ──
+  g(`state.assignments = { odd: { odd_d0_wd0:['A'], odd_d0_wd1:['A','B'] }, even: {} };
+     state.studentLocks = ['A'];
+     state.locks = { odd:{}, even:{} };
+     initAssignments();`);
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd0'])`), '["A"]',
+     'initAssignments 重建槽位后被锁同学的班次原样保留（不修改）');
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd1'])`), '["A"]',
+     '被锁同学与别人同处一个槽位：他被保留，未锁的 B 照旧被重建清空（锁的只是 A 这个人）');
+
+  // 均衡搜索：既不换出被锁同学，也不把他换到别处（不添加）
+  g(`state.students = [
+       {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+       {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]},
+       {sid:'C',name:'C',status:'ready',courses:[],rawCourses:[]}
+     ];
+     state.studentLocks = ['A'];
+     state.assignments = { odd: { odd_d0_wd0:['A'], odd_d0_wd1:['A'], odd_d0_wd2:['B'] }, even: {} };`);
+  g(`optimizeBalance(state.assignments, state.students, ['A','B','C'], Infinity)`);
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd0'])`), '["A"]',
+     'optimizeBalance 不把被锁同学换出（不修改）');
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd1'])`), '["A"]',
+     '被锁同学重负时也不调整他的任何一个班次');
+  ok(g(`!Object.keys(state.assignments.odd).some(k => k !== 'odd_d0_wd0' && k !== 'odd_d0_wd1' && state.assignments.odd[k].includes('A'))`),
+     'optimizeBalance 不会把被锁同学换进新槽位（不添加）');
+
+  // 连续 / 分散偏好用的是「两人互换」，同样要拦下被锁同学
+  g(`state.students = [
+       {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+       {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]}
+     ];
+     state.studentLocks = ['A'];
+     state.assignments = { odd: { odd_d0_wd0:['A'], odd_d0_wd2:['B'] }, even: {} };`);
+  g(`optimizeContinuity(state.assignments, state.students, ['A','B'])`);
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd0'])`), '["A"]',
+     'optimizeContinuity 不参与被锁同学的交换（位置不变）');
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd2'])`), '["B"]',
+     '被锁同学不会被动换到别人槽位（不添加）');
+
+  // ── 端到端：整轮 runSchedule 反复重排，被锁同学的班次集合逐位不变 ──
+  const stuLockStudents = [];
+  for (let i = 0; i < 30; i++) {
+    stuLockStudents.push({ sid: '2025' + String(700000 + i), name: 'L' + i, status: 'ready',
+                           courses: [], rawCourses: [], nowWeek: 8 });
+  }
+  g(`state.students = ${JSON.stringify(stuLockStudents)}`);
+  g('state.template = makeDefaultTemplate(); state.locks = { odd:{}, even:{} }; state.studentLocks = [];');
+  g('state.currentWeek = "odd"; state.currentView = "duty";');
+  setMaxShifts(3);
+  setMaxEnabled(false);
+  g('initAssignments()');
+  return Promise.resolve(g(`(async () => {
+    await runSchedule();
+    // 挑一个已有班次的人锁定，记录他占用的全部槽位
+    const target = '2025700000';
+    const before = [];
+    for (const wt of ['odd', 'even'])
+      for (const key of Object.keys(state.assignments[wt]))
+        if (state.assignments[wt][key].includes(target)) before.push(key);
+    toggleStudentLock(target);
+    await runSchedule();
+    setMaxShiftsEnabled(true);
+    await runSchedule();
+    setMaxShiftsEnabled(false);
+    await runSchedule();
+    return JSON.stringify({ target, before: before.sort() });
+  })()`)).then((raw) => {
+    const { target, before } = JSON.parse(raw);
+    ok(before.length > 0, `被锁同学排班前已有 ${before.length} 个班次，可用来验证「不修改」`);
+
+    const after = JSON.parse(g(`(() => {
+      const out = [];
+      for (const wt of ['odd', 'even'])
+        for (const key of Object.keys(state.assignments[wt]))
+          if (state.assignments[wt][key].includes('${target}')) out.push(key);
+      return JSON.stringify(out.sort());
+    })()`));
+    eq(after, before, '反复重排（含上限开关切换）后被锁同学的班次集合逐位不变');
+
+    const filled = g(`(() => {
+      let n = 0;
+      for (const key in state.assignments.odd) if (state.assignments.odd[key].length > 0) n++;
+      return n;
+    })()`);
+    ok(filled > 10, `锁定个别人不影响整张表继续排班（${filled} 个槽位有人）`);
+
+    // 被锁同学照常计入负载，不会被当成「没排班」而被反复加派
+    ok(g(`weeklyLoadOf(state.assignments, 'odd', '${target}') >= 1`),
+       '被锁同学仍被计入负载统计（口径不失真）');
+
+    // 快照函数本身
+    const snap = JSON.parse(g('JSON.stringify(lockedStudentAssignments())'));
+    ok(Object.keys(snap.odd).length + Object.keys(snap.even).length > 0,
+       'lockedStudentAssignments 给出被锁同学当前占用的槽位快照');
+    const snapHasOnlyLocked = g(`(() => {
+      for (const wt of ['odd','even'])
+        for (const key of Object.keys(lockedStudentAssignments()[wt]))
+          for (const sid of lockedStudentAssignments()[wt][key])
+            if (!isStudentLocked(sid)) return false;
+      return true;
+    })()`);
+    eq(snapHasOnlyLocked, true, '快照里只包含被锁同学（不会把别人一起冻结）');
+    // 没有学生锁时快照为空（不影响原有行为）
+    g('state.studentLocks = []');
+    eq(g('JSON.stringify(lockedStudentAssignments())'), '{"odd":{},"even":{}}',
+       '没有学生锁时快照为空对象');
+  }).then(() => {
+    // ── 清理路径：移除同学 / 重置排班 / 清空 / 剪枝 ──
+    g(`state.students = [
+         {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+         {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]}
+       ];
+       state.studentLocks = ['A','B'];`);
+    g(`dropStudentLock('A')`);
+    eq(g('JSON.stringify(state.studentLocks)'), '["B"]', 'dropStudentLock 只解除该同学的锁');
+
+    g(`state.studentLocks = ['A','B']; state.assignments = { odd:{ odd_d0_wd0:['A'] }, even:{} };`);
+    g(`removeStudent('A')`);
+    eq(g('JSON.stringify(state.studentLocks)'), '["B"]', '移除同学时其学生锁一并清除');
+
+    // 学生列表为空时不做「人是否还在」的判断（否则刚打开页面就会清掉导入的锁）
+    g(`state.studentLocks = ['A','B']; state.students = [];`);
+    eq(g('pruneStudentLocks()'), 0, '学生列表为空时不清理学生锁');
+    eq(g('JSON.stringify(state.studentLocks)'), '["A","B"]', '学生列表为空时锁完整保留');
+    g(`state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}];`);
+    eq(g('pruneStudentLocks()'), 1, '名单变化后剪掉已不在名单里的锁');
+    eq(g('JSON.stringify(state.studentLocks)'), '["A"]', '剪枝后只保留仍在名单里的锁');
+
+    // 重置排班：班次都没了，学生锁继续留着只会让该同学以后一个班都排不到
+    g(`state.studentLocks = ['A']; state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}];`);
+    g(`(function(){ const old = showConfirm; showConfirm = (t, m, fn) => fn(); try { resetSchedule(); } finally { showConfirm = old; } })()`);
+    eq(g('JSON.stringify(state.studentLocks)'), '[]', '重置排班后学生锁一并清空');
+
+    g(`state.studentLocks = ['A']; state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}]; state.assignments = { odd:{}, even:{} };`);
+    g(`(function(){ const old = showConfirm; showConfirm = (t, m, fn) => fn(); try { clearAll(); } finally { showConfirm = old; } })()`);
+    eq(g('JSON.stringify(state.studentLocks)'), '[]', '清空学号与排班后学生锁一并清空');
+  }).then(() => {
+    // ── 导入 / 导出往返 ──
+    g(`state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}];
+       state.studentLocks = ['A'];`);
+    let exportedLocks = null;
+    const origBlob = sandbox.Blob;
+    sandbox.Blob = function (parts) { exportedLocks = JSON.parse(parts[0]); };
+    try { g('exportData()'); } finally { sandbox.Blob = origBlob; }
+    eq(exportedLocks.studentLocks, ['A'], '导出数据里带 studentLocks 字段');
+
+    eq(g('normalizeStudentLocks(undefined)'), [], '旧文件没有该字段 → 视为无人被锁');
+    g('state.studentLocks = normalizeStudentLocks(["B","B","A"])');
+    eq(g('JSON.stringify(state.studentLocks)'), '["B","A"]', '导入时按 normalizeStudentLocks 恢复并去重');
+
+    // loadLocks 同样把学生锁回到空（不持久化，见 §7.3）
+    g('state.studentLocks = ["A"]; loadLocks();');
+    eq(g('JSON.stringify(state.studentLocks)'), '[]', 'loadLocks 把学生锁回到空（不读存档）');
+
+    summary();
+  });
 }).catch(e => {
   console.error('\n集成测试异常：', e);
   process.exitCode = 1;
