@@ -120,7 +120,9 @@ API 端点：
 | `makeContinuityContext()` / `continuityScoreOf()` / `continuityGainOf()` / `totalContinuityScore()` | 连续 / 分散判分（同一天连班 + 相邻天），见 §4.10 |
 | `optimizeContinuity()` | 保负载的「换人」局部搜索：勾选则尽量连续，不勾选则尽量分散，见 §4.10 |
 | `isLocked()` / `lockedSidsOf()` / `toggleLock()` | 排班锁定的判断与切换（锁「该同学+该班次」的位置），见 §4.9 |
+| `isStudentLocked()` / `toggleStudentLock()` / `keptSidsOf()` / `lockedStudentAssignments()` | **学生锁**：学号列表上锁「人」——自动排班对该同学不添加也不修改，见 §4.9.1 |
 | `normalizeLocks()` / `pruneLocks()` / `dropLocksOfStudent()` / `loadLocks()` / `persistLocks()` | 锁定数据的规范化、剪枝与清理（`load/persist` 已退化为默认值 / 空实现，见 §7.3） |
+| `normalizeStudentLocks()` / `pruneStudentLocks()` / `dropStudentLock()` | 学生锁的规范化、剪枝与清理（同样不持久化） |
 | `remapLockKeys()` | 随 `remapAssignmentIds()` 迁移锁定键（导入被清洗过的 id 时必需） |
 | `weeklyLoadOf()` / `totalLoadOf()` / `loadStats()` / `countEmptySlots()` | 负载统计工具 |
 | `canTakeShift()` | 课程冲突判断的唯一入口（显式传参，便于干跑推演） |
@@ -394,6 +396,52 @@ API 端点：
 测试见 `.selftest/test-integration.js` §41（含反复重排后锁定位置不变、
 均衡搜索跳过锁定、拖拽/移除被拦截、导入导出往返、剪枝与清理）。
 
+### 4.9.1 学生锁：学号列表上的锁定（锁「人」，不是锁「位置」）
+
+左侧学号列表的每一行也有一个锁按钮（`toggleStudentLock(sid)`），语义与 §4.9 的**位置锁完全不同**：
+
+| | 数据 | 锁的对象 | 自动排班的效果 |
+| --- | --- | --- | --- |
+| **位置锁**（§4.9） | `state.locks = { odd: { [key]: [sid,…] }, even: {} }` | 「该同学 + 该班次」这个格子 | 该格子不动；该同学在别处、别人进这个格子都照常 |
+| **学生锁**（本节） | `state.studentLocks = [sid, …]` | **这个人** | 对他**既不添加、也不修改**：现有班次全部冻结，也不再派新班次 |
+
+用户原话：「锁定的同学不再进行自动排班，即不添加也不修改其当前班次。」两套数据**互不干扰**，
+可以同时存在；JSON 里分别落在 `locks` 与 `studentLocks` 两个字段（`studentLocks` 为字符串数组，
+旧文件没有该字段 → `normalizeStudentLocks(undefined)` 视为无人被锁）。
+
+**实现要点：把「学生锁」翻译成一份排班快照**，而不是在算法的每个角落各判一次。
+
+`lockedStudentAssignments()` 在重建前扫一遍 `state.assignments`，取出被锁同学占用的每个槽位，
+交给 `initAssignments()` 回填 —— 效果等价于「自动地为他现有的每个位置都加了一把位置锁」。
+这样 `fillWeekGreedy` 拿到的 `kept` 里已经包含他，槽位内容不会被他处覆盖。
+
+五处必须守住的地方（漏任何一处都会静默破坏语义）：
+
+1. **`initAssignments()` 的快照必须在重建之前取。** 它会把 `state.assignments` 整个换掉，
+   之后再取快照就只剩空槽位了。回填时与位置锁**合并去重**（两套锁可能指向同一格）。
+2. **`keptSidsOf(key, wt, assignments, stuLockedSet)` 是「必须保留」的唯一口径**
+   （位置锁 ∪ 学生锁）。`fillWeekGreedy` 里原来直接用 `lockedSidsOf()` 的两处（计负载、取 kept）
+   都已换成它 —— 否则被锁同学的既有班次会在贪心阶段被 `= selected` 覆盖掉。
+3. **候选人池要排除被锁同学**（`if (stuLocked.has(sid)) continue;`），这就是「不添加」。
+4. **`optimizeBalance`：被锁同学既不能当 heavy 换出，也不能出现在 `eligible[key]` 里**（不能换进新槽位）。
+5. **`optimizeContinuity` 的两人互换同样进出都拦**（`candA` / `candB` 里都判 `stuLocked`，
+   `eligible` 集合也预先剔除）。
+
+配套：
+
+- **手工操作不拦**（用户明确选择「只约束自动排班」）：学号列表的锁定**不禁用**右侧标签的拖拽与 ×，
+  用户仍可手动调整。这与 §4.9 位置锁「拖走/移除要拦下」的态度相反，是**刻意的**，别「顺手统一」。
+- 清理时机：`dropStudentLock()` 在 `removeStudent()` 里调用；`clearAll()` / `resetSchedule()` 整体清空；
+  `pruneStudentLocks()` 挂在 `pruneInvalidAssignments()` 末尾（学生名单为空时**不判**「人是否还在」，
+  与 `pruneLocks()` 同理，否则刚打开页面就会把导入回来的锁清掉）。
+- 界面：条目加 `.locked` 类（琥珀色 + 左侧色条）并带 `data-locked="1"`，
+  锁图标复用 §4.9 的 `LOCK_ICON_CLOSED` / `LOCK_ICON_OPEN`。
+- 不持久化到浏览器存储（§7.3）：`loadLocks()` 同时把 `state.studentLocks` 置空。
+
+测试见 `.selftest/test-integration.js` §47：规范化与切换、渲染类名、**不添加**（无班次的人排完仍是 0 班）、
+**不修改**（`initAssignments` / `optimizeBalance` / `optimizeContinuity` 三个入口各自冻结）、
+端到端反复重排后班次集合逐位不变、快照只含被锁同学、清理路径、导入导出往返。
+
 ### 4.11 导出值班表附带「人员表」工作表（只在值班表里，空课表不加）
 
 用户要求「方便表中值班人员快速查看自己在何时有几班」，所以 `exportDutySchedule()` 在
@@ -617,7 +665,8 @@ test-integration.js     排班、剪枝、渲染、导出、导入往返、每�
                                 排班锁定（§41，锁「位置」而非「人」）、弹窗层叠断言（§42，见 §6.7）、
                                 连续 / 分散排班偏好（§43，见 §4.10）、
                                 连续分缓存与朴素实现等价（§43b，见 §4.10 / §5.1）、
-                                人员表（§44，见 §4.11）、顶部菜单栏（§45，见 §4.12）
+                                人员表（§44，见 §4.11）、顶部菜单栏（§45，见 §4.12）、
+                                学生锁（§47，锁「人」——自动排班不添加也不修改，见 §4.9.1）
 test-layout.js          排班日分组（预设/自定义、模式往返、动态渲染与导出、未排班时的表格、
                                 分组只排单周/双周）、学号列表入场动画（只播一次 + 逐条错峰 + 就地更新，
                                 §L25b，见 §4.13）
@@ -844,12 +893,14 @@ git check-ignore -v .selftest/test-new.js   # 无输出 = 不会被忽略
   "locks": {                      // 已锁定的排班位置（version 3 起；旧文件无此字段=全部未锁定）
     "odd":  { "odd_d0_wd0": ["2025210001"] },
     "even": {}
-  }
+  },
+  "studentLocks": ["2025210001"]  // 被锁定「人」的学号（见 §4.9.1；旧文件无此字段=无人被锁）
 }
 ```
 
 **兼容性**：`version: 2` 的旧文件（无 `template` 字段）仍可导入，沿用当前模板；
-无 `locks` 字段的旧文件按「全部未锁定」处理（`normalizeLocks(undefined)`）。
+无 `locks` 字段的旧文件按「全部未锁定」处理（`normalizeLocks(undefined)`），
+无 `studentLocks` 字段按「无人被锁」处理（`normalizeStudentLocks(undefined)`）。
 `handleImportFile()` 会用 `remapAssignmentIds(_idRemap)` 迁移被清洗过的班次 id，
 避免排班被误判失效而清除；**`remapLockKeys()` 会同步迁移锁定键**，否则锁定会被当失效数据丢弃。
 
@@ -905,7 +956,7 @@ git check-ignore -v .selftest/test-new.js   # 无输出 = 不会被忽略
 | `shift_ignored_courses` | `saveIgnoredCourses()` 空实现；`loadIgnoredCourses()` 置空表 |
 | `shift_max_per_week` / `shift_max_enabled` | `persistMaxShifts()` 空实现；`loadMaxShifts()` 回落 `3` / `false` |
 | `shift_continuous` | `persistContinuousScheduling()` 空实现；`loadContinuousScheduling()` 回落 `false` |
-| `shift_locks` | `persistLocks()` 空实现；`loadLocks()` 置空锁定 |
+| `shift_locks` | `persistLocks()` 空实现；`loadLocks()` 置空锁定（含 §4.9.1 的学生锁） |
 | `theme` | `applyTheme()` 只改内存变量 `currentTheme`；`getTheme()` 读该变量 |
 
 四条约束（改代码前务必理解）：
