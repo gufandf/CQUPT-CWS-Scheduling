@@ -1519,19 +1519,23 @@ Promise.resolve(run).then(() => {
   // 使用指南收进「关于」，并在「关于」下新增「软件信息」。
   // node 里没有布局引擎，这里做「入口存在 + 逻辑接线 + 层叠规则」的静态与行为断言；
   // 下拉面板能否真的点到，靠浏览器验证（与 §6.7 同类问题）。
-  section('45. 顶部菜单栏：文件 / 个性化 / 关于');
+  section('45. 顶部菜单栏：文件 / 编辑 / 个性化 / 关于');
 
   const menuHtml = rawHtml();
-  ['menuFile', 'menuPersonal', 'menuAbout'].forEach(id => {
+  ['menuFile', 'menuEdit', 'menuPersonal', 'menuAbout'].forEach(id => {
     ok(menuHtml.includes(`id="${id}"`), `存在一级菜单 ${id}`);
   });
+  // 「编辑」必须排在「文件」之后（DOM 顺序即显示顺序）
+  ok(menuHtml.indexOf('id="menuFile"') < menuHtml.indexOf('id="menuEdit"')
+     && menuHtml.indexOf('id="menuEdit"') < menuHtml.indexOf('id="menuPersonal"'),
+     '「编辑」菜单在 DOM 中排在「文件」与「个性化」之间');
   ok(menuHtml.includes('class="top-menubar"'), '顶部存在 .top-menubar 菜单栏');
 
-  // 「文件」二级菜单里的迁移项
+  // 「文件」二级菜单里的项
   // 注意：「导入学号」接的是 openSidImport（打开弹窗），不再直接接 loadStudents；
-  //       另外新增了「编辑值班模板…」「重置排班…」两项。
+  //       「编辑值班模板…」已迁到「编辑」菜单（见下方「编辑」菜单一节），不在这里断言。
   ['openSidImport', 'importData', 'exportDutySchedule', 'exportFreeSchedule',
-   'exportData', 'exportTemplateFile', 'openTemplateEditor', 'resetSchedule'].forEach(fn => {
+   'exportData', 'exportTemplateFile', 'resetSchedule'].forEach(fn => {
     ok(menuHtml.includes(`menuRun(${fn})`), `「文件」菜单接到 ${fn}`);
   });
   ok(!menuHtml.includes('menuRun(loadStudents)'),
@@ -1591,7 +1595,7 @@ Promise.resolve(run).then(() => {
   ok(!menuHtml.includes('编辑值班模板也都在那里'),
      '源码里已删除左侧面板的「导入学号…（…也都在那里）」注释');
   ok(menuHtml.includes('id="maxShiftsToggle"') && menuHtml.includes('id="continuousToggle"'),
-     '删掉指引文案后，左侧两个开关（上限 / 连续排班）仍然存在');
+     '两个排班开关控件仍然存在（现在在「编辑」菜单里）');
   ok(menuHtml.includes('menuRun(openSidImport)'),
      '删掉指引文案后，「文件」菜单的「导入学号…」入口仍然存在');
 
@@ -1714,11 +1718,16 @@ Promise.resolve(run).then(() => {
   eq(g('openMenuId'), null, 'menuRun 执行动作前先收起了菜单（避免下拉面板浮在弹窗上）');
 
   // ←→ 键在一级菜单间切换；Esc 收起
+  // 一级菜单现在是 文件 / 编辑 / 个性化 / 关于（「编辑」排在「文件」之后，见 §4.12）
   g("setMenuOpen('menuFile', true)");
   g("onMenuBarKeydown({ key:'ArrowRight', preventDefault(){} })");
-  eq(g('openMenuId'), 'menuPersonal', '→ 切到下一个一级菜单');
+  eq(g('openMenuId'), 'menuEdit', '→ 从「文件」切到「编辑」');
+  g("onMenuBarKeydown({ key:'ArrowRight', preventDefault(){} })");
+  eq(g('openMenuId'), 'menuPersonal', '→ 再切到「个性化」');
   g("onMenuBarKeydown({ key:'ArrowLeft', preventDefault(){} })");
-  eq(g('openMenuId'), 'menuFile', '← 切回上一个一级菜单');
+  eq(g('openMenuId'), 'menuEdit', '← 切回上一个一级菜单');
+  g("onMenuBarKeydown({ key:'ArrowLeft', preventDefault(){} })");
+  eq(g('openMenuId'), 'menuFile', '← 继续切回「文件」');
   g("onMenuBarKeydown({ key:'Escape' })");
   eq(g('openMenuId'), null, 'Esc 收起菜单');
 
@@ -2001,6 +2010,86 @@ Promise.resolve(run).then(() => {
     // loadLocks 同样把学生锁回到空（不持久化，见 §7.3）
     g('state.studentLocks = ["A"]; loadLocks();');
     eq(g('JSON.stringify(state.studentLocks)'), '[]', 'loadLocks 把学生锁回到空（不读存档）');
+
+    // ── 48. 顶部「编辑」菜单：模板编辑 + 两个排班偏好开关（见 AGENT.md §4.12） ──
+    // 用户要求新增「编辑」一级菜单，把「编辑值班模板」「限制每人每周班次」「连续排班」
+    // 三项收进它的二级菜单（从「文件」菜单与左侧面板**搬走**，不是复制）。
+    section('48. 顶部「编辑」菜单：模板编辑与两个排班开关');
+    const editHtml = rawHtml();
+
+    // 一级菜单存在，且 MENU_IDS 与 DOM 顺序一致
+    ok(editHtml.includes('id="menuEdit"'), '存在一级菜单 #menuEdit');
+    eq(g('JSON.stringify(MENU_IDS)'), '["menuFile","menuEdit","menuPersonal","menuAbout"]',
+       'MENU_IDS 含「编辑」且顺序与 DOM 一致（←→ 导航自动跟着走）');
+
+    // 「编辑值班模板…」已从「文件」菜单迁到这里，且**只出现一次**（不是两处都能点）
+    eq((editHtml.match(/menuRun\(openTemplateEditor\)/g) || []).length, 1,
+       'menuRun(openTemplateEditor) 全源码只出现一次（从「文件」菜单搬走，未重复保留）');
+    const iEdit = editHtml.indexOf('id="menuEdit"');
+    const iPersonal = editHtml.indexOf('id="menuPersonal"');
+    const editPanel = editHtml.slice(iEdit, iPersonal);
+    ok(editPanel.includes('menuRun(openTemplateEditor)'),
+       '「编辑值班模板…」在「编辑」菜单面板内');
+
+    // 两个开关控件都落在「编辑」菜单面板里（而不是左侧面板）
+    ok(editPanel.includes('id="maxShiftsToggle"'), '「限制每人每周班次」开关在「编辑」菜单面板内');
+    ok(editPanel.includes('id="maxShiftsInput"'), '上限数值框也在「编辑」菜单面板内');
+    ok(editPanel.includes('id="continuousToggle"'), '「连续排班」开关在「编辑」菜单面板内');
+    // 左侧面板里不再有它们：取 .left-panel 到 .right-panel 之间的片段来断言
+    const iLeft = editHtml.indexOf('class="left-panel"');
+    const iRight = editHtml.indexOf('class="right-panel"');
+    const leftPanel = editHtml.slice(iLeft, iRight);
+    ok(!leftPanel.includes('id="maxShiftsToggle"'), '左侧面板不再有上限开关');
+    ok(!leftPanel.includes('id="maxShiftsInput"'), '左侧面板不再有上限数值框');
+    ok(!leftPanel.includes('id="continuousToggle"'), '左侧面板不再有「连续排班」开关');
+    ok(!leftPanel.includes('class="opt-row"'),
+       '左侧面板里不再有 .opt-row（两个开关整块搬走，不是复制）');
+
+    // 开关必须**不**走 menuRun：开关没有弹窗，收起菜单会让用户看不到勾选变化
+    ok(/id="maxShiftsToggle"[^>]*onchange="setMaxShiftsEnabled\(this\.checked\)"/.test(editHtml),
+       '上限开关的 onchange 直接调 setMaxShiftsEnabled（未包 menuRun，菜单保持展开）');
+    ok(/id="continuousToggle"[^>]*onchange="setContinuousScheduling\(this\.checked\)"/.test(editHtml),
+       '连续排班开关的 onchange 直接调 setContinuousScheduling（未包 menuRun）');
+    ok(!/menuRun\(function\(\)\s*\{\s*setMaxShiftsEnabled/.test(editHtml),
+       '上限开关没有包在 menuRun 里（包了就会点一下立刻收起菜单）');
+    ok(!/menuRun\(function\(\)\s*\{\s*setContinuousScheduling/.test(editHtml),
+       '连续排班开关没有包在 menuRun 里');
+
+    // 面板加宽样式（里面放了开关 + 数值框），且它仍走 .menu-panel 的层叠
+    ok(editHtml.includes('menu-panel-wide'), '「编辑」面板用了 menu-panel-wide（比纯文字面板宽）');
+    ok(/\.menu-panel-wide\s*\{[^}]*min-width/.test(editHtml), 'CSS 里定义了 .menu-panel-wide 的 min-width');
+    ok(/\.menu-panel\s+\.menu-opt\s*\{/.test(editHtml),
+       'CSS 里把菜单内的 .opt-row 视觉并入 .menu-item 风格（去边框、hover 同色）');
+
+    // 行为：走一遍开关，菜单不被收起，且状态 / 控件 / 文案三处同步
+    g("setMenuOpen('menuEdit', true)");
+    eq(g('openMenuId'), 'menuEdit', '可以展开「编辑」菜单');
+    ok(el('menuEdit').classList.contains('open'), '「编辑」菜单加上 open 类');
+    g('setMaxShiftsEnabled(true)');
+    eq(g('openMenuId'), 'menuEdit', '点开关后「编辑」菜单仍保持展开（否则看不到勾选变化）');
+    eq(el('maxShiftsToggle').checked, true, '开关控件同步为已勾选');
+    eq(el('maxShiftsInput').disabled, false, '勾选后数值框可用');
+    ok(String(el('maxShiftsHint').textContent).includes('已限制'), '勾选后说明文案含「已限制」');
+    g('setMaxShiftsEnabled(false)');
+    eq(g('openMenuId'), 'menuEdit', '取消勾选后菜单同样保持展开');
+    eq(el('maxShiftsInput').disabled, true, '取消勾选后数值框重新置灰');
+    g('setContinuousScheduling(true); syncContinuousInput();');
+    eq(el('continuousToggle').checked, true, '连续排班开关在菜单里照常同步');
+    ok(String(el('continuousHint').textContent).includes('连成片'), '勾选后说明文案变为「连成片」');
+    g('setContinuousScheduling(false); syncContinuousInput();');
+    eq(g('openMenuId'), 'menuEdit', '连续排班开关的同步也不收起菜单');
+
+    // 「编辑值班模板…」仍然照 §4.12 第 1 条先收菜单再开弹窗
+    g("setMenuOpen('menuEdit', true)");
+    g('menuRun(openTemplateEditor)');
+    eq(g('openMenuId'), null, 'menuRun(openTemplateEditor) 先收起菜单再执行');
+    eq(el('templateModal').classList.contains('show'), true, '模板编辑器被打开');
+    g('closeTemplateEditor()');
+    eq(el('templateModal').classList.contains('show'), false, '关闭模板编辑器');
+
+    // 权限 / 禁用同步：上限开关的量同步函数不依赖左侧面板存在
+    g('syncMaxShiftsInput(); syncContinuousInput();');
+    ok(el('maxShiftsToggle') && el('continuousToggle'), '两个控件在菜单里仍可被同步函数取到');
 
     summary();
   });
