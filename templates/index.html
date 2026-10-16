@@ -1030,6 +1030,50 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   border: 1px solid var(--border); max-height: 400px; overflow: auto;
 }
 
+/* ── Export Settings Dialog（#exportModal，见 §4.17） ── */
+.export-dialog-desc {
+  font-size: 12.5px; line-height: 1.7; color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+.export-field { margin-bottom: 16px; }
+.export-field-label {
+  font-size: 12px; font-weight: 700; color: var(--text);
+  margin-bottom: 7px;
+}
+.export-field-body { display: flex; flex-direction: column; gap: 8px; }
+.export-static {
+  font-size: 12px; color: var(--text-secondary);
+  padding: 7px 11px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+/* 单选行：整行都是热区，选中时描边高亮 */
+.export-radio {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 11px; cursor: pointer; user-select: none;
+  background: var(--card); border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition), background var(--transition);
+}
+.export-radio:hover { border-color: var(--text-muted); }
+.export-radio input[type="radio"] {
+  margin: 2px 0 0; flex-shrink: 0; accent-color: var(--primary); cursor: pointer;
+}
+.export-radio > span {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.export-radio small {
+  font-size: 11px; font-weight: 400; color: var(--text-muted); line-height: 1.55;
+}
+/* 选中态：给整行描边上色（用 :has，现代浏览器都支持；不支持的只是少了这层高亮，不影响功能） */
+.export-radio:has(input[type="radio"]:checked) {
+  border-color: var(--primary); background: var(--primary-light);
+}
+.export-dialog-hint {
+  font-size: 11.5px; line-height: 1.7; color: var(--text-muted);
+  padding-top: 4px; border-top: 1px dashed var(--border); margin-top: 4px;
+}
+
 /* ── Course Modal ───────────────────────── */
 .course-modal { max-width: 960px; width: 95%; max-height: 86vh; }
 .course-grid-wrapper { overflow: auto; max-height: 58vh; }
@@ -1429,9 +1473,9 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
               onclick="menuRun(function(){ document.getElementById('tplFileInput').click(); })">导入模板…</button>
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" id="menuExportDuty"
-              onclick="menuRun(exportDutySchedule)" disabled>导出值班表</button>
+              onclick="menuRun(function(){ openExportDialog('duty'); })" disabled>导出值班表…</button>
       <button class="menu-item" role="menuitem" id="menuExportFree"
-              onclick="menuRun(exportFreeSchedule)" disabled>导出空课表</button>
+              onclick="menuRun(function(){ openExportDialog('free'); })" disabled>导出空课表…</button>
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick="menuRun(exportData)">导出数据</button>
       <button class="menu-item" role="menuitem" onclick="menuRun(exportTemplateFile)">导出值班模板</button>
@@ -1553,6 +1597,7 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         </button>
         <!-- 导入 / 导出类入口都搬到了顶部「文件」菜单。下面这些隐藏按钮只为保留既有 id，
              让老脚本与自测仍能触发同一动作，别删、也别显示出来。 -->
+        <!-- 隐藏兼容按钮：老脚本 / 自测仍按「调用即导出」触发（不经过设置对话框） -->
         <button type="button" id="btnExportDuty" style="display:none" onclick="exportDutySchedule()" disabled>导出值班表</button>
         <button type="button" id="btnExportFree" style="display:none" onclick="exportFreeSchedule()" disabled>导出空课表</button>
         <button type="button" id="btnMenuImportStudents" style="display:none" onclick="loadStudents()">导入学号</button>
@@ -1587,20 +1632,48 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   </div>
 </div>
 
-<!-- ===== 导出弹窗 ===== -->
+<!-- ===== 导出设置弹窗（「文件」菜单 → 导出值班表 / 导出空课表） ===== -->
+<!-- 保留 id="exportModal"：它必须仍然排在 #confirmModal **之前**（§6.7 的层叠前提），
+     改名/换位置会破坏 §42 与 §45 的静态断言。 -->
 <div class="modal-overlay" id="exportModal">
-  <div class="modal">
+  <div class="modal" style="max-width:460px;">
     <div class="modal-header">
-      <h3 id="modalTitle">导出预览</h3>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <h3 id="modalTitle">导出设置</h3>
+      <button class="close-btn" onclick="closeExportDialog()">×</button>
     </div>
     <div class="modal-body">
-      <pre id="modalContent"></pre>
+      <p id="exportDialogDesc" class="export-dialog-desc"></p>
+
+      <!-- 导出格式（目前只有 Excel，留作以后扩展的占位） -->
+      <div class="export-field">
+        <div class="export-field-label">导出格式</div>
+        <div class="export-field-body">
+          <span class="export-static">Excel 工作簿（.xlsx）</span>
+        </div>
+      </div>
+
+      <!-- 名字分隔符：同一个班次里有多个同学时，名字之间用什么隔开 -->
+      <div class="export-field">
+        <div class="export-field-label">名字分隔符</div>
+        <div class="export-field-body">
+          <label class="export-radio" for="exportSepDun">
+            <input type="radio" name="exportSep" id="exportSepDun" value="、"
+                   onchange="setExportSeparator('、')">
+            <span>顿号「、」<small>张三、李四（默认，一行显示）</small></span>
+          </label>
+          <label class="export-radio" for="exportSepNewline">
+            <input type="radio" name="exportSep" id="exportSepNewline" value="newline"
+                   onchange="setExportSeparator('newline')">
+            <span>换行符<small>张三 ↵ 李四（写入单元格内的换行；Excel 里需该格开启「自动换行」才显示为多行）</small></span>
+          </label>
+        </div>
+      </div>
+
+      <p class="export-dialog-hint" id="exportDialogHint"></p>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal()">关闭</button>
-      <button class="btn btn-primary" onclick="copyModalContent()">复制</button>
-      <button class="btn btn-success" onclick="downloadModalContent()">下载</button>
+      <button class="btn btn-outline" onclick="closeExportDialog()">取消</button>
+      <button class="btn btn-success" id="exportDialogConfirm" onclick="confirmExportDialog()">导出</button>
     </div>
   </div>
 </div>
@@ -1724,7 +1797,12 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
           （若文件里的模板有问题，则不会直接套用，只打开编辑器并标出问题）。
           确认无误后可以再点「保存并应用」，也可以直接关掉编辑器。</p>
         <p><strong>8. 导出</strong>：支持导出值班表/空课表为 Excel，导出/导入排班数据为 JSON（含值班模板与锁定），
-          全部集中在顶部<b>「文件」菜单</b>。<strong>「导出值班表」得到的 Excel 还附带第三个工作表「人员表」</strong>，
+          全部集中在顶部<b>「文件」菜单</b>。
+          <b>点「导出值班表…」/「导出空课表…」会先弹出一个设置窗口</b>，确认设置后点窗口里的
+          <b>「导出」</b>才会生成文件（点「取消」则不导出）。目前可设<b>名字分隔符</b>：
+          同一个班次有多位同学时，选<b>顿号「、」</b>写成「张三、李四」占一行，或选<b>换行符</b>在单元格内一行一个
+          （Excel 里需对该列开启「自动换行」才会显示成多行）。<br>
+          <strong>「导出值班表」得到的 Excel 还附带第三个工作表「人员表」</strong>，
           把「按班次看人」翻转成「按人看班次」（姓名 / 学号 / 单周班次 / 双周班次 / 合计 + 逐条明细），
           方便每位值班同学快速查看自己在何时有几班；没有排到班的同学也会保留一行并显示 0。
           「导出空课表」不含人员表。</p>
@@ -2214,6 +2292,11 @@ function sortShifts(list) {
 // ============================================================
 //  状态
 // ============================================================
+/* 导出时同一班次里多个名字的分隔符（见 §4.17）：
+   '、' = 顿号（默认，一行显示）；'newline' = 换行符（单元格内一行一个）。 */
+const EXPORT_SEP_DEFAULT = '、';
+const EXPORT_SEP_NEWLINE = 'newline';
+
 const state = {
   students: [],           // [{sid, name, status, courses, rawCourses, nowWeek}]
   currentWeek: 'odd',     // 'odd' | 'even'
@@ -2237,6 +2320,9 @@ const state = {
   studentLocks: [],
   // 左侧学号列表的搜索词（纯视图过滤，不影响排班 / 抓课表 / 导出，见 §4.15）
   studentQuery: '',
+  // 导出设置：同一个班次里多个名字之间的分隔符，'、'（默认）或 'newline'（见 §4.17）
+  exportSeparator: EXPORT_SEP_DEFAULT,
+  exportPending: null,       // 导出对话框待执行的动作：'duty' | 'free' | null
   currentCourseModalSid: null  // 当前打开课表弹窗的学生学号
 };
 
@@ -5309,7 +5395,7 @@ function exportDutySchedule() {
     const sheetName = weekType === 'odd' ? '单周值班表' : '双周值班表';
     const ws = buildSheetRows(weekType, (wt, d, shift) => {
       const key = generateShiftKey(wt, d, shift.id);
-      return (state.assignments[wt][key] || []).map(getStudentName).join('、');
+      return joinNames((state.assignments[wt][key] || []).map(getStudentName));
     });
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   }
@@ -5333,7 +5419,7 @@ function exportFreeSchedule() {
         if (!s.courses) return true;
         return !hasConflict(s.courses, weekday, shift.conflictPeriods, wt);
       });
-      return freeStudents.map(s => s.name).join('、');
+      return joinNames(freeStudents.map(s => s.name));
     });
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   }
@@ -5456,8 +5542,100 @@ function handleImportFile(event) {
   event.target.value = '';
 }
 
-// 移除旧的弹窗管理
-function downloadModalContent() {}
+// ============================================================
+//  导出设置对话框（见 §4.17）
+// ============================================================
+/*
+ * 「文件」菜单里的「导出值班表 / 导出空课表」现在都先弹这个对话框，
+ * 让用户选好设置再点「导出」，而不是点了就闷头生成文件。
+ *
+ * 历史遗留：原来的 #exportModal 是一个**从未被打开过的死壳子** ——
+ * DOM 里有它，但没有任何代码给它加 `.show`，`closeModal()` / `copyModalContent()`
+ * 更是**根本没有定义**，`downloadModalContent()` 是空函数。副作用是全局 Esc 处理
+ * 末尾那句 `closeModal()` 会在没有弹窗打开时抛 ReferenceError（按 Esc 就报错）。
+ * 这里把壳子改造成真正的设置对话框，并补上缺失的关闭函数，顺带修掉那个崩溃。
+ */
+
+/** 当前分隔符（规范化：非法值回落默认「、」） */
+function getExportSeparator() {
+  return state.exportSeparator === EXPORT_SEP_NEWLINE ? EXPORT_SEP_NEWLINE : EXPORT_SEP_DEFAULT;
+}
+
+/** 分隔符的「实际字符」：顿号，或换行符 */
+function exportSeparatorChar() {
+  return getExportSeparator() === EXPORT_SEP_NEWLINE ? '\n' : EXPORT_SEP_DEFAULT;
+}
+
+/** 把一组姓名按当前分隔符拼成一个单元格文本 */
+function joinNames(names) {
+  return (names || []).join(exportSeparatorChar());
+}
+
+/** 切换分隔符（对话框里的单选） */
+function setExportSeparator(value) {
+  state.exportSeparator = (value === EXPORT_SEP_NEWLINE) ? EXPORT_SEP_NEWLINE : EXPORT_SEP_DEFAULT;
+  syncExportDialog();
+}
+
+/** 只读默认值：导出设置同样不持久化（见 §7.3） */
+function loadExportSettings() {
+  state.exportSeparator = EXPORT_SEP_DEFAULT;
+  state.exportPending = null;
+}
+
+/** 把当前设置同步进对话框（勾选态 + 提示文案） */
+function syncExportDialog() {
+  const isNewline = getExportSeparator() === EXPORT_SEP_NEWLINE;
+  const dun = document.getElementById('exportSepDun');
+  const nl = document.getElementById('exportSepNewline');
+  if (dun) dun.checked = !isNewline;
+  if (nl) nl.checked = isNewline;
+
+  const desc = document.getElementById('exportDialogDesc');
+  if (desc) {
+    const isDuty = state.exportPending !== 'free';
+    desc.textContent = isDuty
+      ? '导出值班表（Excel，含单周 / 双周值班表与「人员表」三个工作表）。'
+      : '导出空课表（Excel，含单周 / 双周两张工作表）。';
+  }
+  const hint = document.getElementById('exportDialogHint');
+  if (hint) {
+    // 注意：本程序用的 xlsx 库是**社区版**，它无法写入单元格样式（wrapText）。
+    // 换行符本身会正确写进单元格（SheetJS 会带 xml:space="preserve"），
+    // 但 Excel 需要该格勾选「自动换行」才会显示成多行 —— 所以这里如实说明，别写成「已自动开启」。
+    hint.textContent = isNewline
+      ? '换行符会写进单元格；Excel 需对该列开启「自动换行」才会显示成多行（本程序使用的开源库社区版无法写入单元格样式）。'
+      : '顿号：同一班次的多位同学写成「张三、李四」，占一行。';
+  }
+}
+
+/**
+ * 打开导出设置对话框。kind = 'duty' | 'free'，决定底部「导出」按钮执行哪个导出。
+ * 入口是「文件」菜单 → 导出值班表 / 导出空课表（都改成了先弹这个框）。
+ */
+function openExportDialog(kind) {
+  state.exportPending = (kind === 'free') ? 'free' : 'duty';
+  syncExportDialog();
+  document.getElementById('exportModal').classList.add('show');
+}
+
+/** 关闭导出对话框（不执行导出）。× / 取消 / Esc / 点遮罩都走这里。 */
+function closeExportDialog() {
+  state.exportPending = null;
+  document.getElementById('exportModal').classList.remove('show');
+}
+
+/** 点「导出」：按当前设置真正生成文件，然后关框 */
+function confirmExportDialog() {
+  const kind = state.exportPending;
+  closeExportDialog();       // 先关框，避免导出异常时框卡在那儿
+  if (kind === 'free') exportFreeSchedule();
+  else exportDutySchedule();
+}
+
+/** 供自测与老脚本使用的兼容入口（旧按钮曾接这个名字） */
+function closeModal() { closeExportDialog(); }
+function downloadModalContent() { confirmExportDialog(); }
 
 // ============================================================
 //  值班模板编辑器
@@ -6332,7 +6510,12 @@ document.addEventListener('keydown', (e) => {
       closeSidImport();
       return;
     }
-    closeModal();
+    // 导出设置对话框（原先是裸的 closeModal()，那个函数当时根本没定义，
+    // 于是「没有任何弹窗时按 Esc」会抛 ReferenceError；现在补了定义并加上开关判断）
+    if (document.getElementById('exportModal').classList.contains('show')) {
+      closeExportDialog();
+      return;
+    }
   }
   // Ctrl+Enter 触发排班（上限是否生效由「编辑」菜单里的「限制每人每周班次」开关决定）
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -6345,9 +6528,9 @@ document.getElementById('aboutModal').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeAbout();
 });
 
-// 关闭弹窗点击外部
+// 关闭导出设置对话框（点击外部）
 document.getElementById('exportModal').addEventListener('click', (e) => {
-  if (e.target === e.currentTarget) closeModal();
+  if (e.target === e.currentTarget) closeExportDialog();
 });
 
 // ============================================================
@@ -6360,6 +6543,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadContinuousScheduling(); // 连续排班偏好（勾选=连班，不勾选=分散）
   loadLocks();              // 已锁定的排班位置
   loadStudentQuery();       // 学号列表搜索词（只在内存，见 §4.15 / §7.3）
+  loadExportSettings();     // 导出设置（分隔符，只在内存，见 §4.17）
   syncMaxShiftsInput();     // 数值框 + 开关 + 说明文案
   syncContinuousInput();
   renderStudentList();

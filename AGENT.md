@@ -136,7 +136,9 @@ API 端点：
 | `renderTemplateEditor()` / `renderShiftCard()` | 模板编辑器 UI |
 | `tplSetMode()` / `tplAddGroup()` / `tplToggleDay()` / `tplExplodeToDays()` | 分组模式与结构编辑 |
 | `validateDraft()` / `templateWarnings()` / `saveTemplateEditor()` | 保存前校验（阻断）/ 提示（不阻断）/ 应用模板 |
-| `exportDutySchedule()` / `exportFreeSchedule()` / `exportData()` | 导出 |
+| `exportDutySchedule()` / `exportFreeSchedule()` / `exportData()` | 导出（前两者走 `joinNames()` 按所选分隔符拼接） |
+| `openExportDialog()` / `closeExportDialog()` / `confirmExportDialog()` / `syncExportDialog()` | 导出设置对话框的三个入口 + 界面同步，见 §4.17 |
+| `getExportSeparator()` / `exportSeparatorChar()` / `setExportSeparator()` / `joinNames()` / `loadExportSettings()` | 名字分隔符（`、` 或换行符）的读写与拼接，见 §4.17 |
 | `buildPersonSheet()` | 「人员表」工作表（按人聚合班次，随值班表导出），见 §4.11 |
 | `handleImportFile()` / `handleTemplateFileImport()` / `applyImportedTemplate()` | 导入数据 / 导入模板文件（后者**立即生效并自动打开模板编辑器**，见 §4.12） |
 | `MENU_IDS` / `openMenuId` / `setMenuOpen()` / `toggleMenu()` / `menuRun()` | 顶部菜单栏的一级菜单清单、展开状态与开合逻辑，见 §4.12 |
@@ -769,6 +771,50 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 「已可见 / 在上方 / 在下方 / 边界夹取 / null 与空矩形」五种情形、
 `hoverScheduleStudent` 的高亮与滚动、以及「左侧列表项自己不滚」。
 
+### 4.17 导出设置对话框（`#exportModal`）与名字分隔符
+
+「文件」菜单里的**「导出值班表…」/「导出空课表…」现在都先弹设置对话框**，
+选好设置再点「导出」才真正生成文件（取消 / × / Esc / 点遮罩都不导出）。
+
+> **这个弹窗原先是一具死壳子，别改回去。** DOM 里一直有 `#exportModal`，
+> 但**没有任何代码给它加 `.show`**，`closeModal()` / `copyModalContent()` **根本没定义**、
+> `downloadModalContent()` 是空函数。它带来的实际 bug 是：全局 Esc 处理末尾那句裸的
+> `closeModal()`，在**没有任何弹窗打开时按 Esc 会抛 `ReferenceError`**。
+> 现在弹窗被改造成设置对话框，并补上了 `closeExportDialog()`；
+> 全局 Esc 分支也改成了先判 `#exportModal` 有没有 `.show`。
+
+三条实现约束：
+
+1. **必须继续用 `id="exportModal"`，且位置不能动。** §6.7 的层叠前提是
+   「所有 `.modal-overlay` 都是 `<body>` 直接子元素、`#confirmModal` 排在 `#templateModal` 之前」，
+   `.selftest` §42 / §45 都对这个顺序做静态断言。**不要为了「名字更贴切」把它改名或搬家。**
+2. **分隔符只有两个合法值**：`'、'`（`EXPORT_SEP_DEFAULT`，默认）与 `'newline'`
+   （`EXPORT_SEP_NEWLINE`）。`getExportSeparator()` 对任何非法值一律回落顿号，
+   `exportSeparatorChar()` 把它翻译成实际字符（`'、'` 或 `'\n'`），
+   **所有拼接都必须走 `joinNames()`**，别再在导出里直接写 `join('、')`。
+   两个导出（值班表 / 空课表）共用同一个设置与同一个 `joinNames()`。
+3. **设置不持久化**（§7.3）：`loadExportSettings()` 一律回到顿号并清掉
+   `state.exportPending`（`'duty' | 'free' | null`，决定「导出」按钮执行哪个导出）。
+
+**关于换行符，有一个必须如实说明的技术限制**（已在浏览器 + LibreOffice 里实测）：
+本程序用的是 **SheetJS 社区版**，它**无法写入单元格样式**（`wrapText` 写不进去 ——
+生成的 `xl/styles.xml` 里既没有 `wrapText`，`cellStyles: true` 也不起作用）。
+换行符**本身会正确写进单元格**（SheetJS 会自动带 `xml:space="preserve"`，
+实测 LibreOffice 打开就是两行），但 **Excel 需要该格开启「自动换行」才显示为多行**。
+因此对话框里的提示文案写的是「Excel 里需该格开启『自动换行』才显示为多行
+（本程序使用的开源库社区版无法写入单元格样式）」——
+**不要把它简化成「已自动开启自动换行」，那是假的**（§50 有一条断言专门守这句话）。
+
+> 隐藏兼容按钮 `#btnExportDuty` / `#btnExportFree` 仍然接 `exportDutySchedule()` /
+> `exportFreeSchedule()`（**调用即导出，不经过对话框**），老脚本与 `.selftest/test-layout.js` §L23
+> 因此不受影响。菜单项才走 `openExportDialog`。
+
+测试见 `.selftest/test-integration.js` §50：DOM 顺序前提、两个单选项与默认勾选、
+分隔符的常量 / 规范化 / `joinNames` 三种输入、对话框开关与 `pending` 语义、
+**导出内容真的按所选分隔符拼接**（值班表与空课表各测两种）、取消不产生文件、
+隐藏兼容按钮仍直接导出、`closeModal()` 可安全调用（原先会抛错）、以及不写入 localStorage。
+（已用注入 bug 确认：让 `joinNames` 忽略分隔符会红 4 条，让菜单直接导出会红 1 条。）
+
 ---
 
 ## 5. 测试
@@ -784,6 +830,7 @@ test-integration.js     排班、剪枝、渲染、导出、导入往返、每�
                                 连续 / 分散排班偏好（§43，见 §4.10）、
                                 连续分缓存与朴素实现等价（§43b，见 §4.10 / §5.1）、
                                 人员表（§44，见 §4.11）、顶部菜单栏（§45，见 §4.12）、
+                                导出设置对话框与名字分隔符（§50，见 §4.17）、
                                 学生锁（§47，锁「人」——自动排班不添加也不修改，见 §4.9.1）、
                                 「编辑」菜单（§48，见 §4.12）、
                                 导入模板文件立即生效并自动开编辑器（§49，见 §4.12）
@@ -948,7 +995,7 @@ git check-ignore -v .selftest/test-new.js   # 无输出 = 不会被忽略
 ### 6.7 弹窗层叠：确认框必须被单独抬高（曾导致班次删不掉）
 
 `index.html` 里 **7 个** `.modal-overlay`
-（DOM 顺序：`exportModal` → `courseModal` → `confirmModal` → **`sidImportModal`** → `guideModal`
+（DOM 顺序：`exportModal`（**导出设置对话框**，见 §4.17） → `courseModal` → `confirmModal` → **`sidImportModal`** → `guideModal`
 → `aboutModal` → `templateModal`）
 **都是 `<body>` 的直接子元素**，其中除 `#confirmModal` 外的 6 个共用同一条规则 `z-index: 9998`
 （`#confirmModal` 被单独抬到 9999，见下）。
