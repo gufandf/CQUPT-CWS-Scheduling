@@ -1686,7 +1686,7 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
       <div style="display:flex;align-items:center;gap:12px;">
         <span style="font-size:12px;color:var(--text-secondary);" id="courseModalWeek"></span>
         <button class="btn btn-outline btn-sm" onclick="refreshSingleCourse()" title="重新获取该同学的课表">刷新</button>
-        <button class="btn btn-outline btn-sm" onclick="resetIgnoredCourses()" title="重置该同学的忽略课程">重置忽略</button>
+        <button class="btn btn-outline btn-sm" onclick="clearIgnoredCourses()" title="清除该同学的全部忽略课程">清除忽略</button>
         <button class="close-btn" onclick="closeCourseModal()">×</button>
       </div>
     </div>
@@ -1695,12 +1695,14 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         <div class="course-grid" id="courseGrid"></div>
       </div>
       <div style="margin-top:12px;font-size:11px;color:var(--text-secondary);text-align:center;">
-        点击课程块可<strong>忽略</strong>该课程（排班时不考虑该时段冲突）
+        点击课程块可<strong>忽略</strong>该课程（排班时不考虑该时段冲突）；
+        忽略<strong>只由手动点击决定</strong>，程序不会自动忽略任何课程。
       </div>
     </div>
     <div class="modal-footer">
+      <!-- 右下角原有的「重新排班」按钮已按用户要求删除：忽略课程只是调整冲突口径，
+           排班仍由左侧「开始排班」按钮统一触发，不在这个弹窗里重复一个入口。 -->
       <button class="btn btn-outline" onclick="closeCourseModal()">关闭</button>
-      <button class="btn btn-primary" onclick="closeCourseModal();runSchedule()">重新排班</button>
     </div>
   </div>
 </div>
@@ -1785,7 +1787,10 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
           （适合「课表还没更新、先别动他」的情况）；他在右侧表格里的标签仍可手动拖动、移除。
           左边锁定的同学会显示为琥珀色。<br>
           两种锁定都会随「导出/导入数据」一起保存。</p>
-        <p><strong>6. 课表管理</strong>：点击学生姓名查看课表，可<strong>忽略</strong>特定课程后重新排班。</p>
+        <p><strong>6. 课表管理</strong>：点击学生姓名查看课表，<strong>点击课表里的课程块即可忽略该课程</strong>
+          （排班时不再把该时段当作冲突），再点一次取消。忽略<strong>只有手动这一种来源</strong>——
+          程序不会按课程名或周次自动忽略任何课程；弹窗顶部的「清除忽略」可一次取消该同学的全部忽略。
+          调整完忽略后，点左下角<strong>「开始排班」</strong>重新分配即可。</p>
         <p><strong>7. 值班模板</strong>：顶部<b>「编辑」菜单 → 编辑值班模板…</b>可自定义每个班次的<strong>值班时间、值班人数、单双周</strong>，
           自由<strong>添加/删除/排序</strong>班次，并单独设置与该时段<strong>冲突的课程节次</strong>。<br>
           <strong>排班日分组</strong>支持两种模式：「工作日 / 周末」为预设两组；「一周 7 天自由组合」可自定义分组数量、
@@ -1815,8 +1820,8 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         </p>
         <!-- <hr style="border-color:var(--border);margin:12px 0;"> -->
         <p style="font-size:12px;color:var(--text-muted);">
-          <strong>提示</strong>：含"实训""实习""课程设计"等关键词的课程会被自动忽略。<br>
-          点击课表弹窗中的「刷新」可单独更新某同学的课表。<br>
+          <strong>提示</strong>：课程忽略需在课表弹窗里<strong>手动点击</strong>课程块设置，没有自动忽略。<br>
+          点击课表弹窗中的「刷新」可单独更新某同学的课表（已手动忽略的课程会保留）。<br>
           导出 Excel 依赖 CDN 上的 xlsx 库，<b>完全离线时导出会失效</b>。<br>
           切换主题请用顶部<b>「个性化」菜单</b>（深夜模式 / 日间模式 / 跟随系统）。<br>
           软件版本与开发者信息见顶部<b>「关于」菜单 → 软件信息</b>。
@@ -1950,8 +1955,8 @@ const CONFIG = {
   weekendDays: [5, 6],          // 周六周日的索引
   // 注意：每人每周班次上限不再是写死的常量，改由 state.maxShiftsPerWeek 配置
   //（是否生效看 state.maxShiftsEnabled 开关），默认值见 MAX_SHIFTS_DEFAULT。
-  // 忽略的课程名称关键词（整周实训/实习类课程不计入冲突）
-  ignoreCourseKeywords: ['实训', '实习','实践', '课程设计', '毕业设计']
+  // 注意：这里**没有**「自动忽略课程关键词」——课程忽略一律由用户手动点击决定，
+  // 见下方 parseCourses() 与「课程忽略管理」一节。别再引入按课程名自动忽略的规则。
 };
 
 // ── 排班日分组 ──────────────────────────────────────────────
@@ -2309,7 +2314,7 @@ const state = {
   tplDraft: null,                    // 模板编辑弹窗中的草稿
   isScheduling: false,
   studentNames: {},       // 学号 -> 姓名映射（缓存）
-  ignoredCourses: {},     // { sid: Set of course_num } 被忽略的课程
+  ignoredCourses: {},     // { sid: Set of courseId } 被**手动**忽略的课程（唯一来源，见 §4.18）
   maxShiftsPerWeek: 3,    // 每人每周最多班次数值（见 §4.8）
   maxShiftsEnabled: false, // 「限制每人每周班次」开关；false=不限制（默认）
   continuousShifts: false, // 连续排班偏好：true=尽量连班，false=尽量分散（见 §4.10）
@@ -3103,15 +3108,9 @@ async function fetchAllSchedules() {
           student.courses = parseCourses(data.courses, student.sid);
           student.rawCourses = data.courses;
           student.status = 'ready';
-          // 清除旧手动忽略，以本次自动忽略为准
-          if (state.ignoredCourses[student.sid]) {
-            state.ignoredCourses[student.sid].clear();
-          }
-          for (const c of student.courses) {
-            c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-              || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-            c.ignored = c.autoIgnored;
-          }
+          // 注意：**不要**清空 state.ignoredCourses[student.sid]。
+          // 课程忽略只由用户手动标记，刷新课表后这些标记必须保留（parseCourses 会按
+          // 同一套 courseId 重新套用），否则用户每刷新一次就白忽略一遍（见 §4.18）。
         } else {
           student.status = 'error';
         }
@@ -3139,7 +3138,7 @@ async function fetchAllSchedules() {
   showToast(`课表获取完成：成功 ${successCount} 人，失败 ${failCount} 人`, failCount > 0 ? 'error' : 'success');
 }
 
-function parseCourses(data, sid, skipAutoIgnore = false) {
+function parseCourses(data, sid) {
   const courses = [];
   const ignoredSet = state.ignoredCourses[sid] || new Set();
   for (const item of data) {
@@ -3150,12 +3149,6 @@ function parseCourses(data, sid, skipAutoIgnore = false) {
     const courseId = item.class_id
         ? `${item.class_id}_d${item.hash_day}_p${item.begin_lesson}_w${firstWeek}`
         : `${item.course_num || courseName}_d${item.hash_day}_p${item.begin_lesson}_w${firstWeek}`;
-    const isManuallyIgnored = ignoredSet.has(courseId);
-
-    // 自动忽略：关键词匹配 或 仅在18周及以后的课程（期末周）。导入时不自动忽略
-    const isAutoIgnored = skipAutoIgnore ? false
-      : CONFIG.ignoreCourseKeywords.some(kw => courseName.includes(kw))
-        || (item.week && item.week.length > 0 && item.week.every(w => w >= 18));
 
     const weekday = (item.hash_day !== undefined ? item.hash_day + 1 : 0);
     const begin = item.begin_lesson || 1;
@@ -3186,9 +3179,9 @@ function parseCourses(data, sid, skipAutoIgnore = false) {
       hasOdd: oddWeeks.length > 0,
       hasEven: evenWeeks.length > 0,
       isFullDay: isFullDay,
-      // 若用户手动点过（在ignoredSet中）则取反自动忽略，否则跟随自动忽略
-      ignored: ignoredSet.has(courseId) ? !isAutoIgnored : isAutoIgnored,
-      autoIgnored: isAutoIgnored
+      // 忽略状态**只**来自用户的显式手动标记（见 §4.18）：
+      // 没有任何按课程名 / 周次自动忽略的规则，parseCourses 绝不自行把课程标记为忽略。
+      ignored: ignoredSet.has(courseId)
     });
   }
   return courses;
@@ -4926,15 +4919,7 @@ function showStudentCourse(sid) {
         student.courses = parseCourses(data.courses, student.sid);
         student.rawCourses = data.courses;
         student.status = 'ready';
-        // 清除旧手动忽略，以本次自动忽略为准
-        if (state.ignoredCourses[student.sid]) {
-          state.ignoredCourses[student.sid].clear();
-        }
-        for (const c of student.courses) {
-          c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-            || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-          c.ignored = c.autoIgnored;
-        }
+        // 手动忽略标记保留（不 clear），parseCourses 已按 courseId 重新套用，见 §4.18
         saveIgnoredCourses();
         renderStudentList();
         updateButtons();
@@ -4992,15 +4977,7 @@ async function refreshSingleCourse() {
       student.courses = parseCourses(data.courses, sid);
       student.rawCourses = data.courses;
       student.status = 'ready';
-      // 清除旧手动忽略，以本次自动忽略为准
-      if (state.ignoredCourses[student.sid]) {
-        state.ignoredCourses[student.sid].clear();
-      }
-      for (const c of student.courses) {
-        c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-          || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-        c.ignored = c.autoIgnored;
-      }
+      // 手动忽略标记保留（不 clear），parseCourses 已按 courseId 重新套用，见 §4.18
       saveIgnoredCourses();
       // 刷新弹窗内容
       document.getElementById('courseModalTitle').textContent = `${student.name} (${sid}) - 课表`;
@@ -5091,8 +5068,13 @@ function renderCourseGrid(student) {
 }
 
 // ============================================================
-//  课程忽略管理
+//  课程忽略管理（**只有手动一种来源**，见 §4.18）
 // ============================================================
+/*
+ * 忽略某门课 = 排班时不再把该时段当作冲突，是**纯手工**操作：
+ * 用户在课表弹窗里点课程块切换，除此之外没有任何自动忽略规则
+ * （按课程名关键词、按 18 周及以后等规则都已删除，别再引入）。
+ */
 function toggleCourseIgnore(sid, courseId) {
   if (!state.ignoredCourses[sid]) {
     state.ignoredCourses[sid] = new Set();
@@ -5111,8 +5093,8 @@ function toggleCourseIgnore(sid, courseId) {
     ignoredSet.add(courseId);
   }
 
-  // 新忽略状态：手动标记过则取反自动忽略，否则跟随自动忽略
-  course.ignored = ignoredSet.has(courseId) ? !course.autoIgnored : course.autoIgnored;
+  // 忽略状态只由手动标记决定（集合里就是被忽略）
+  course.ignored = ignoredSet.has(courseId);
 
   saveIgnoredCourses();
   showToast(course.ignored ? '已忽略该课程（排班时将不考虑该时段冲突）' : '已取消忽略', 'info');
@@ -5128,7 +5110,11 @@ function toggleCourseIgnore(sid, courseId) {
   updateButtons();
 }
 
-function resetIgnoredCourses() {
+/**
+ * 「清除忽略」：把该同学**全部手动忽略**的课程一次取消。
+ * 删掉自动忽略后，这里不再「重新套用自动忽略规则」，只做纯粹的清空。
+ */
+function clearIgnoredCourses() {
   const sid = state.currentCourseModalSid;
   if (!sid) return;
 
@@ -5138,14 +5124,11 @@ function resetIgnoredCourses() {
 
   saveIgnoredCourses();
 
-  // 重置学生课表忽略状态：重新计算自动忽略并应用
+  // 学生课表上的 ignored 标记同步清掉（现在只可能来自手动标记）
   const student = state.students.find(s => s.sid === sid);
   if (student && student.courses) {
     for (const course of student.courses) {
-      // 重新计算自动忽略（关键词 + 18周及以后）
-      course.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => course.name.includes(kw))
-        || (course.weeks && course.weeks.length > 0 && course.weeks.every(w => w >= 18));
-      course.ignored = course.autoIgnored;
+      course.ignored = false;
     }
     renderCourseGrid(student);
   }
@@ -5153,7 +5136,7 @@ function resetIgnoredCourses() {
   refreshView();
   highlightAllConflicts();
   updateButtons();
-  showToast('已重置该同学的忽略课程', 'info');
+  showToast('已清除该同学的全部忽略课程', 'info');
 }
 
 function highlightConflictsForStudent(sid) {
@@ -5437,10 +5420,13 @@ function exportData() {
     date: new Date().toISOString(),
     template: state.template,
     students: state.students.map(s => {
-      // 导出所有被忽略的课程ID（手动 + 自动）
-      const allIgnored = s.courses
-        ? s.courses.filter(c => c.ignored).map(c => c.courseId)
-        : (state.ignoredCourses[s.sid] ? [...state.ignoredCourses[s.sid]] : []);
+      // 导出被手动忽略的课程 ID。忽略只有手动一种来源（见 §4.18），
+      // 因此以 state.ignoredCourses 这份「手动标记集合」为准 —— 它比
+      // 「遍历当前课表筛 c.ignored」更稳：课表里暂时不存在的课程也能被带出去。
+      const manualSet = state.ignoredCourses[s.sid];
+      const allIgnored = manualSet && manualSet.size > 0
+        ? [...manualSet]
+        : (s.courses ? s.courses.filter(c => c.ignored).map(c => c.courseId) : []);
       return {
         sid: s.sid,
         name: s.name,
@@ -5493,24 +5479,16 @@ function handleImportFile(event) {
           courses: null,
           rawCourses: null
         };
-        // 恢复课表数据
+        // 恢复课表数据（ignoreCourseId 由 state.ignoredCourses 提供，parseCourses 会套用）
         if (s.rawCourses && s.rawCourses.length > 0) {
           student.rawCourses = s.rawCourses;
-          student.courses = parseCourses(s.rawCourses, s.sid, true);
+          student.courses = parseCourses(s.rawCourses, s.sid);
           student.status = 'ready';
         }
         return student;
       });
-      // 补算自动忽略（导入时跳过了，需重新应用规则）
-      state.students.forEach(s => {
-        if (s.courses) {
-          for (const c of s.courses) {
-            c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-              || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-            c.ignored = c.ignored || c.autoIgnored;
-          }
-        }
-      });
+      // 不再「补算自动忽略」：课程忽略只有手动一种来源，文件里的 ignoredCourses
+      // 已经在上面的 ignoredSet 恢复里被 parseCourses 套用，无需二次计算（见 §4.18）。
       // 恢复值班模板（若文件内没有则沿用当前模板）
       if (data.template) {
         state.template = normalizeTemplate(data.template);
