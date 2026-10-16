@@ -1533,11 +1533,16 @@ Promise.resolve(run).then(() => {
 
   // 「文件」二级菜单里的项
   // 注意：「导入学号」接的是 openSidImport（打开弹窗），不再直接接 loadStudents；
-  //       「编辑值班模板…」已迁到「编辑」菜单（见下方「编辑」菜单一节），不在这里断言。
-  ['openSidImport', 'importData', 'exportDutySchedule', 'exportFreeSchedule',
-   'exportData', 'exportTemplateFile', 'resetSchedule'].forEach(fn => {
-    ok(menuHtml.includes(`menuRun(${fn})`), `「文件」菜单接到 ${fn}`);
-  });
+  //       「编辑值班模板…」已迁到「编辑」菜单（见下方「编辑」菜单一节），不在这里断言；
+  //       两个「导出…」项现在接的是导出设置对话框 openExportDialog（见 §50）。
+  ['openSidImport', 'importData', 'exportData', 'exportTemplateFile', 'resetSchedule']
+    .forEach(fn => {
+      ok(menuHtml.includes(`menuRun(${fn})`), `「文件」菜单接到 ${fn}`);
+    });
+  ok(/menuRun\(function\(\)\{ openExportDialog\('duty'\); \}\)/.test(menuHtml),
+     '「导出值班表」先打开导出设置对话框（不再直接导出）');
+  ok(/menuRun\(function\(\)\{ openExportDialog\('free'\); \}\)/.test(menuHtml),
+     '「导出空课表」先打开导出设置对话框（不再直接导出）');
   ok(!menuHtml.includes('menuRun(loadStudents)'),
      '「文件」菜单不再直接接 loadStudents（改为先打开学号弹窗）');
   ok(/menuRun\(function\(\)\{ document\.getElementById\('tplFileInput'\)\.click\(\); \}\)/.test(menuHtml),
@@ -2197,6 +2202,150 @@ Promise.resolve(run).then(() => {
     ok(/state\.template = draft/.test(rawHtml()),
        'applyImportedTemplate 会直接写入 state.template（导入即生效）');
 
+    // ── 50. 导出设置对话框 + 名字分隔符（见 AGENT.md §4.17） ──
+    // 需求：导出时先弹一个对话框完成导出设置，目前只有「名字分隔符」（、或换行符）。
+    // 顺带修掉一个潜在崩溃：原 #exportModal 是死壳子，closeModal() 从未定义，
+    // 而全局 Esc 处理末尾会裸调它 —— 没有任何弹窗时按 Esc 就抛 ReferenceError。
+    section('50. 导出设置对话框与名字分隔符');
+
+    const expHtml = rawHtml();
+    ok(expHtml.includes('id="exportModal"'), '导出设置对话框仍用 #exportModal（不破坏 §6.7 的 DOM 顺序前提）');
+    ok(expHtml.indexOf('id="exportModal"') < expHtml.indexOf('id="confirmModal"'),
+       '#exportModal 仍排在 #confirmModal 之前（§42 的层叠前提不变）');
+    ok(expHtml.includes('id="exportSepDun"') && expHtml.includes('id="exportSepNewline"'),
+       '对话框里有「顿号 / 换行符」两个单选项');
+    ok(expHtml.includes('id="exportDialogConfirm"'), '对话框有「导出」按钮');
+    ok(expHtml.includes('openExportDialog') && expHtml.includes('closeExportDialog')
+       && expHtml.includes('confirmExportDialog'), '导出流程的三个入口函数都在源码里');
+    ok(g('typeof closeModal') === 'function', 'closeModal() 已定义（原先不存在，Esc 会抛 ReferenceError）');
+    ok(g('typeof closeExportDialog') === 'function', 'closeExportDialog() 已定义');
+    ok(g('typeof copyModalContent') !== 'function',
+       '已删除没人接线的 copyModalContent 空壳（原弹窗的「复制」按钮）');
+
+    // 常量与默认值
+    eq(g('EXPORT_SEP_DEFAULT'), '、', '默认分隔符是顿号');
+    eq(g('EXPORT_SEP_NEWLINE'), 'newline', '换行符用 "newline" 常量表示');
+    g('loadExportSettings()');
+    eq(g('state.exportSeparator'), '、', 'loadExportSettings 回落默认顿号（不持久化）');
+    eq(g('state.exportPending'), null, 'loadExportSettings 清掉待执行的导出动作');
+
+    // 规范化：非法值一律回落顿号
+    g('setExportSeparator("随便什么")');
+    eq(g('state.exportSeparator'), '、', '非法分隔符回落为顿号');
+    eq(g('exportSeparatorChar()'), '、', '非法值时实际字符是顿号');
+    g('setExportSeparator("newline")');
+    eq(g('state.exportSeparator'), 'newline', '切到换行符');
+    eq(g('exportSeparatorChar()'), '\n', '换行符时实际字符是 \\n');
+    g('setExportSeparator("、")');
+    eq(g('state.exportSeparator'), '、', '切回顿号');
+
+    // joinNames 按当前分隔符拼接
+    g('setExportSeparator("、")');
+    eq(g('joinNames(["张三","李四"])'), '张三、李四', '顿号拼接');
+    g('setExportSeparator("newline")');
+    eq(g('joinNames(["张三","李四"])'), '张三\n李四', '换行符拼接');
+    eq(g('joinNames([])'), '', '空数组拼成空串');
+    eq(g('joinNames(["独苗"])'), '独苗', '单人时没有分隔符');
+    eq(g('joinNames(undefined)'), '', 'undefined 安全');
+
+    // 对话框开关：openExportDialog 打开并把设置同步进控件
+    g('loadExportSettings()');
+    g("document.getElementById('exportModal').classList.remove('show')");
+    g("openExportDialog('duty')");
+    eq(el('exportModal').classList.contains('show'), true, 'openExportDialog 打开对话框');
+    eq(g('state.exportPending'), 'duty', 'pending 记为 duty');
+    eq(el('exportSepDun').checked, true, '默认勾选顿号');
+    eq(el('exportSepNewline').checked, false, '换行符未勾选');
+    ok(String(el('exportDialogDesc').textContent).includes('值班表'), '说明文案指向值班表');
+    g("setExportSeparator('newline')");
+    eq(el('exportSepNewline').checked, true, '切到换行符后该单选框被勾选');
+    eq(el('exportSepDun').checked, false, '顿号单选框取消勾选');
+    ok(String(el('exportDialogHint').textContent).includes('换行'), '提示文案说明换行符行为');
+    // 诚实性：社区版写不了单元格样式，文案不能声称「已自动开启自动换行」
+    ok(!String(el('exportDialogHint').textContent).includes('已自动为该工作表开启'),
+       '【实测】提示文案不谎称「已自动开启自动换行」（社区版写不了样式）');
+    ok(!/已自动开启自动换行/.test(expHtml), '源码里没有「已自动开启自动换行」这种不实说法');
+
+    g("closeExportDialog()");
+    eq(g('state.exportPending'), null, 'closeExportDialog 清掉 pending');
+    eq(el('exportModal').classList.contains('show'), false, 'closeExportDialog 关掉对话框');
+    g("openExportDialog('free')");
+    ok(String(el('exportDialogDesc').textContent).includes('空课表'), '空课表时说明文案指向空课表');
+
+    // confirmExportDialog：按 pending 执行对应导出，并先关框
+    g(`state.students = [{sid:'2025210001',name:'张三',status:'ready',courses:[],rawCourses:[],nowWeek:8},
+                         {sid:'2025210002',name:'李四',status:'ready',courses:[],rawCourses:[],nowWeek:8}];`);
+    g('state.template = makeDefaultTemplate();');
+    g('state.locks = {odd:{},even:{}}; state.studentLocks = [];');
+    g('initAssignments();');
+    g(`state.assignments.odd['odd_d0_wd0'] = ['2025210001','2025210002'];`);
+
+    g('setExportSeparator("、")');
+    writeFiles.length = 0;
+    g("openExportDialog('duty'); confirmExportDialog();");
+    eq(el('exportModal').classList.contains('show'), false, '点「导出」后对话框自动关闭');
+    eq(writeFiles.length, 1, '点「导出」真的生成了一次文件');
+    {
+      const rows = writeFiles[0].wb.Sheets['单周值班表'].rows;
+      const cell = rows.map(r => r.join('|')).find(r => r.includes('张三'));
+      ok(cell && cell.includes('张三、李四'), '顿号：导出单元格里是「张三、李四」', cell && cell.slice(0, 60));
+    }
+
+    g('setExportSeparator("newline")');
+    writeFiles.length = 0;
+    g("openExportDialog('duty'); confirmExportDialog();");
+    {
+      const rows = writeFiles[0].wb.Sheets['单周值班表'].rows;
+      const cell = rows.map(r => r.join('|')).find(r => r.includes('张三'));
+      ok(cell && cell.includes('张三\n李四'), '换行符：导出单元格里是「张三\\n李四」', cell && JSON.stringify(cell.slice(0, 30)));
+      ok(cell && !cell.includes('张三、李四'), '换行符时不再出现顿号');
+    }
+
+    // 空课表也走同一个分隔符
+    g('setExportSeparator("newline")');
+    writeFiles.length = 0;
+    g("openExportDialog('free'); confirmExportDialog();");
+    eq(writeFiles[0].wb.SheetNames, ['单周空课表', '双周空课表'], '导出空课表：仍是两个工作表');
+    {
+      const rows = writeFiles[0].wb.Sheets['单周空课表'].rows;
+      const flat = rows.map(r => r.join('|')).join('\n');
+      ok(flat.includes('张三\n李四') || flat.includes('李四\n张三'), '空课表同样使用所选分隔符（换行符）');
+    }
+    g('setExportSeparator("、")');
+    writeFiles.length = 0;
+    g("openExportDialog('free'); confirmExportDialog();");
+    {
+      const rows = writeFiles[0].wb.Sheets['单周空课表'].rows;
+      const flat = rows.map(r => r.join('|')).join('\n');
+      ok(flat.includes('张三、李四') || flat.includes('李四、张三'), '空课表切回顿号后按顿号拼接');
+    }
+
+    // 取消不产生文件
+    g('setExportSeparator("、")');
+    writeFiles.length = 0;
+    g("openExportDialog('duty'); closeExportDialog();");
+    eq(writeFiles.length, 0, '打开后点「取消」不会导出任何文件');
+
+    // 隐藏兼容按钮仍按「调用即导出」工作（老脚本不看对话框）
+    writeFiles.length = 0;
+    g('exportDutySchedule()');
+    eq(writeFiles.length, 1, '隐藏兼容按钮走的 exportDutySchedule() 仍直接导出');
+    writeFiles.length = 0;
+    g('exportFreeSchedule()');
+    eq(writeFiles.length, 1, '隐藏兼容按钮走的 exportFreeSchedule() 仍直接导出');
+
+    // 全局 Esc：没有弹窗时不能再抛错（原先是裸调未定义的 closeModal）
+    ok(/if \(document\.getElementById\('exportModal'\)\.classList\.contains\('show'\)\)/.test(expHtml),
+       '全局 Esc 处理里对导出对话框加了 show 判断（不再裸调 closeModal）');
+    let closeThrew = null;
+    try { g('closeModal()'); } catch (e) { closeThrew = e.message; }
+    eq(closeThrew, null, 'closeModal() 可安全调用（原先 ReferenceError）');
+
+    // 不持久化（§7.3）
+    g('setExportSeparator("newline")');
+    g('loadExportSettings()');
+    eq(g('state.exportSeparator'), '、', '导出设置不持久化，回到默认顿号');
+    eq(JSON.stringify(g('localStorage._dump()')), '{}', '导出设置不写入 localStorage');
     summary();
   });
 }).catch(e => {
