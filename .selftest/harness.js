@@ -152,6 +152,33 @@ function collectPaths(root, basePath, sel, out = []) {
   return out;
 }
 
+/* ── 布局 / 滚动桩 ────────────────────────────────────────────────
+ * 页面里有两处依赖布局信息：
+ *   · highlightStudent → hoverScheduleStudent → scrollStudentIntoView()（§4.16）；
+ *   · 拖拽 / 命中测试（本来就用不到布局）。
+ * node 环境没有 CSS 引擎，所以这里默认让 getBoundingClientRect() 返回全 0 矩形，
+ * 页面代码会判定「无布局信息」而什么都不做 —— 既有断言因此完全不受影响。
+ * 需要验证滚动数学的用例用 setItemRect / setBoxRect 显式喂矩形，
+ * 再调 scrollStudentIntoView() 并检查容器 scrollTop 的变化。
+ */
+const layoutStub = {
+  itemRects: new Map(),   // key: sid 或 'list'
+  boxRect: null,          // #studentList 的可视区矩形
+  setItemRect(sid, r) { layoutStub.itemRects.set(sid, r); },
+  setBoxRect(r) { layoutStub.boxRect = r; },
+  reset() { layoutStub.itemRects.clear(); layoutStub.boxRect = null; },
+  rectOf(el) {
+    const empty = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 };
+    if (!el) return empty;
+    // #studentList 自身
+    if (el.id === 'studentList') return layoutStub.boxRect || empty;
+    // 学号条目：按 data-sid 找矩形
+    const sid = el.dataset ? el.dataset.sid : (el.getAttribute ? el.getAttribute('data-sid') : null);
+    const r = sid ? layoutStub.itemRects.get(sid) : null;
+    return r || empty;
+  },
+};
+
 /** 已解析节点的桩：读写都会落到所属元素的 innerHTML 字符串上 */
 function mkNodeStub(root, path) {
   const stub = {
@@ -212,6 +239,14 @@ function mkNodeStub(root, path) {
     closest() { return null; },
     addEventListener() {}, removeEventListener() {}, appendChild() {}, click() {},
   };
+  /* 布局 / 滚动桩（默认「无布局信息」）。
+   * harness 没有 CSS 引擎，getBoundingClientRect 一律返回全 0 —— 这样页面的
+   * 「按 rect 判断是否要滚」的代码会走「无布局信息 → 不动」分支，既有断言不受影响。
+   * 需要验证滚动逻辑的用例，可用 layoutStub.setItemRect / setBoxRect 显式喂矩形。 */
+  stub.getBoundingClientRect = function () { return layoutStub.rectOf(this); };
+  stub.scrollTop = 0;
+  stub.scrollHeight = 0;
+  stub.clientHeight = 0;
   stub.classList = {
     _list() { return stub.className.split(/\s+/).filter(Boolean); },
     _write(list) { stub.className = list.join(' '); },
@@ -243,6 +278,8 @@ function mkEl(id) {
     querySelectorAll(sel) { return collectPaths(el, [], sel).map(p => mkNodeStub(el, p)); },
     closest() { return null; }, cloneNode() { return mkEl(id); },
     getAttribute() { return null; }, setAttribute() {}, removeAttribute() {},
+    getBoundingClientRect() { return layoutStub.rectOf(this); },
+    scrollTop: 0, scrollHeight: 0, clientHeight: 0,
   };
   // innerHTML 用访问器：setter 只存字符串，querySelector 时按需解析
   Object.defineProperty(el, 'innerHTML', {
@@ -385,4 +422,4 @@ function summary() {
   return fail === 0;
 }
 
-module.exports = { ctx, sandbox, document, localStorage, el, g, ok, eq, section, summary, writeFiles, failures, rawHtml: readHtml, clearAllTimers };
+module.exports = { ctx, sandbox, document, localStorage, el, g, ok, eq, section, summary, writeFiles, failures, rawHtml: readHtml, clearAllTimers, layoutStub };
