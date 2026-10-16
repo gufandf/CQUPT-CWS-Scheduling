@@ -2091,6 +2091,112 @@ Promise.resolve(run).then(() => {
     g('syncMaxShiftsInput(); syncContinuousInput();');
     ok(el('maxShiftsToggle') && el('continuousToggle'), '两个控件在菜单里仍可被同步函数取到');
 
+    // ── 49. 修复「文件 → 导入模板…」点了没反应（见 AGENT.md §4.12 末尾） ──
+    // 原实现：解析后只写草稿 state.tplDraft + 弹一条 toast「点击保存并应用生效」，
+    //   既不保存也不打开编辑器 → 弹窗是 display:none，renderTemplateEditor() 写的 HTML
+    //   用户根本看不到，界面「点了没反应」；而且草稿只活在内存里，
+    //   下次 openTemplateEditor() 会用当前模板重新深拷贝，把导入内容**静默覆盖**。
+    // 修复口径（用户确认）：导入即生效，并自动打开模板编辑器。
+    section('49. 导入模板文件：立即生效并自动打开编辑器');
+
+    // 造一份与默认模板明显不同的模板文件（单分组、单班次、自定义名称）
+    const tplFile = {
+      version: 2,
+      name: '导入测试模板',
+      mode: 'weekday',
+      layout: [{ key: 'weekday', name: '周一至周五', days: [0, 1, 2, 3, 4] },
+               { key: 'weekend', name: '周六至周日', days: [5, 6] }],
+      groups: {
+        weekday: [{ id: 'wd0', label: '测试早班', start: '08:00', end: '09:30',
+                    capacity: 3, weeks: 'all', conflictPeriods: [1], autoConflict: false, enabled: true }],
+        weekend: [{ id: 'we0', label: '测试周末班', start: '09:00', end: '10:30',
+                    capacity: 2, weeks: 'all', conflictPeriods: [1], autoConflict: false, enabled: true }],
+      },
+    };
+
+    // 先让页面处于「已有生效模板 + 已有排班」的状态，才能验证「导入是否真的生效」
+    g('state.template = makeDefaultTemplate();');
+    g(`state.students = [
+         {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+         {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[],nowWeek:8}
+       ];`);
+    g('state.locks = {odd:{},even:{}}; state.studentLocks = [];');
+    g('initAssignments();');
+    g(`state.assignments.odd['odd_d0_wd0'] = ['A'];`);
+    g('state.tplDraft = null;');
+    g(`document.getElementById('templateModal').classList.remove('show')`);
+
+    // 直接调核心函数（handleTemplateFileImport 的 FileReader 回调体），免去异步文件读取
+    const importRes = JSON.parse(g(`JSON.stringify(applyImportedTemplate(${JSON.stringify(tplFile)}))`));
+    eq(importRes.applied, true, '校验通过的模板文件被直接应用（applied === true）');
+    eq(importRes.name, '导入测试模板', '返回的模板名来自文件');
+    ok(importRes.dropped >= 0, '返回清掉的失效排班数量');
+
+    // ① 立即生效：state.template 已经是导入的模板
+    eq(g('state.template.name'), '导入测试模板', '导入后 state.template 立即变成文件里的模板');
+    eq(g('state.template.groups.weekday.length'), 1, '导入后生效模板的班次来自文件（默认模板是 6 个）');
+    eq(g(`state.template.groups.weekday[0].label`), '测试早班', '班次内容来自文件');
+
+    // ② 自动打开编辑器：弹窗真的处于 show 状态（这正是原 bug 的缺口）
+    eq(el('templateModal').classList.contains('show'), true,
+       '导入后模板编辑器自动打开（原先没有这一步，用户看不到任何变化）');
+    ok(String(el('tplBody').innerHTML).length > 0, '编辑器正文被渲染（不再是空白）');
+    ok(String(el('tplBody').innerHTML).includes('测试早班'), '编辑器里显示的是刚导入的班次');
+    ok(String(el('tplBody').innerHTML).includes('导入测试模板'), '编辑器里显示的是刚导入的模板名');
+
+    // ③ 草稿与生效模板一致，且「取消」按既有语义丢弃草稿（不影响已生效的模板）
+    eq(g('state.tplDraft.name'), '导入测试模板', '编辑器草稿就是刚导入的模板');
+    g('closeTemplateEditor()');
+    eq(el('templateModal').classList.contains('show'), false, '可以正常关闭编辑器');
+    eq(g('state.tplDraft'), null, '取消后草稿被丢弃（与既有草稿语义一致）');
+    eq(g('state.template.name'), '导入测试模板',
+       '取消不会回滚：导入已经生效（这是本次确认的口径）');
+
+    // ④ 旧 bug 的回归锁：导入后**不需要**用户再手动打开编辑器才能看到内容。
+    //    这里直接断言「applyImportedTemplate 自己就打开了弹窗」，而不是依赖 openTemplateEditor。
+    g('closeTemplateEditor()');
+    g(`document.getElementById('templateModal').classList.remove('show')`);
+    g(`applyImportedTemplate(${JSON.stringify(tplFile)})`);
+    eq(el('templateModal').classList.contains('show'), true,
+       '再次导入同样自动打开编辑器（不依赖用户手动点「编辑值班模板…」）');
+
+    // ⑤ 排班剪枝仍然照常执行（导入的模板里没有默认模板的其它班次）
+    const leftKeys = g(`(() => {
+      const out = [];
+      for (const wt of ['odd','even']) for (const k of Object.keys(state.assignments[wt])) out.push(k);
+      return out.length;
+    })()`);
+    ok(leftKeys > 0, `导入后按新模板重建/剪枝了槽位（现有 ${leftKeys} 个）`);
+    ok(!g(`Object.keys(state.assignments.odd).includes('odd_d0_wd1')`),
+       '默认模板里、导入模板中不存在的班次槽位已被清掉');
+
+    // ⑥ 有阻断性错误的模板：不当场生效，但仍打开编辑器让用户修正
+    g('closeTemplateEditor()');
+    g('state.template = makeDefaultTemplate();');
+    // 说明：normalizeTemplate() 会补齐空模板名、丢弃时间非法的班次，所以能真正走到
+    // validateDraft 阻断分支的、唯一的现实情况是「某分组所有班次都被停用」。
+    const badTpl = JSON.parse(JSON.stringify(tplFile));
+    badTpl.groups.weekday.forEach(s => { s.enabled = false; });
+    const badRes = JSON.parse(g(`JSON.stringify(applyImportedTemplate(${JSON.stringify(badTpl)}))`));
+    eq(badRes.applied, false, '有阻断性错误时不当场生效（避免把坏模板套到现有排班上）');
+    ok(badRes.errors.length > 0, '返回了错误列表', badRes.errors);
+    eq(g('state.template.name'), '默认模板', '坏模板没有覆盖现有生效模板');
+    ok(badRes.errors.some(msg => msg.includes('停用')),
+       '错误列表里给出了「所有班次都被停用」的具体原因', badRes.errors);
+    eq(el('templateModal').classList.contains('show'), true, '坏模板也会打开编辑器让用户修正');
+    ok(String(el('tplBody').innerHTML).includes('停用'), '编辑器正文里标出了这条错误');
+    g('closeTemplateEditor()');
+
+    // ⑦ 静态断言：源码里不再保留「不会自动打开编辑器」那套说法
+    ok(!rawHtml().includes('不会自动打开编辑器'),
+       '源码里已删除「不会自动打开编辑器」（与新的自动打开行为矛盾）');
+    ok(rawHtml().includes('function applyImportedTemplate'),
+       '新增 applyImportedTemplate() 作为可测的核心入口');
+    ok(/applyImportedTemplate\(parsed\)/.test(rawHtml()),
+       'handleTemplateFileImport 走 applyImportedTemplate(parsed)');
+    ok(/state\.template = draft/.test(rawHtml()),
+       'applyImportedTemplate 会直接写入 state.template（导入即生效）');
+
     summary();
   });
 }).catch(e => {
