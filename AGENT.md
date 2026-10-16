@@ -117,6 +117,7 @@ API 端点：
 | `openSidImport()` / `closeSidImport()` | 学号录入弹窗 `#sidImportModal` 的开关（入口是「文件」菜单 → 导入学号…）；`loadStudents()` 只读弹窗里的 `#sidInput` |
 | `renderStudentList()` / `updateStudentListItem()` / `_animatedSids` | 左侧学号列表的整列渲染 / **单条就地更新**，后者供刷新课表的逐条进度使用；`_animatedSids` 记录已播过入场动画的人，配合 `STAGGER_STEP_MS` / `STAGGER_MAX_MS` 逐条写 `--stagger-delay`，见 §4.13 第 4、5 条 |
 | `setStudentQuery()` / `clearStudentQuery()` / `filterStudentsByQuery()` / `normalizeStudentQuery()` / `studentMatchesQuery()` / `isStudentVisible()` / `loadStudentQuery()` | 学号列表搜索（**纯视图过滤**，按姓名 / 学号子串匹配），见 §4.15 |
+| `hoverScheduleStudent()` / `scrollStudentIntoView()` | 悬浮值班表班次标签时高亮 + 把左侧同学滚进可视区（只在不可见时才滚），见 §4.16 |
 | `isContinuousScheduling()` / `setContinuousScheduling()` / `loadContinuousScheduling()` | 「连续排班」开关的读写（**不持久化**，见 §7.3），见 §4.10 |
 | `makeContinuityContext()` / `continuityScoreOf()` / `continuityGainOf()` / `totalContinuityScore()` | 连续 / 分散判分（同一天连班 + 相邻天），见 §4.10 |
 | `optimizeContinuity()` | 保负载的「换人」局部搜索：勾选则尽量连续，不勾选则尽量分散，见 §4.10 |
@@ -722,6 +723,52 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 以及搜索不影响 `runSchedule` / `fetchAllSchedules` 且不写入 localStorage。
 （已用注入 bug 的方式确认：让过滤失效会红 9 条，让搜索改写 `state.students` 会红 20 条。）
 
+### 4.16 悬浮体验：标签不位移、锁热区加大、悬浮班次时左列表定位
+
+三条已确认的用户要求，全都改在「观感 / 命中」层面，**不涉及任何排班逻辑**：
+
+1. **`.student-tag:hover` 不做位移与缩放。** 原先写的是
+   `transform: translateY(-2px) scale(1.03)`，鼠标划过一排标签时整排都在上下跳
+   （与 §4.13 第 2 条「`.shift-cell:hover` 不许 `scale`」是同一类问题）。
+   现在只保留 `box-shadow` / `filter` 这类**不改变几何**的反馈。
+   > 连带清掉了 `.student-tag.locked:hover { transform: none }` —— 它存在的唯一目的
+   > 就是抵消那个上移，主规则一删它就成了多余的重复声明。
+   > **拖拽相关动画要保留**：`.dragging` / `@keyframes dragPulse` / `.drop-available`
+   > 都是**落点反馈**，不属于「悬浮动效」，别顺手一起删。
+
+2. **锁按钮热区加大到 24×24**（`.student-tag .lock-btn`）。图标本身只有 10px，
+   原先的可点区就是那 10px，很难点中。
+   > **必须用负纵向 margin 抵消高度增长**：实测 24px 的盒子会把标签从 **26px 撑到 32px**，
+   > 整行随之变高、观感变化很明显。现在 `margin: -7px 2px -7px -4px`，
+   > 热区仍是 24×24、标签高度回到 26px（已在浏览器里用 `getBoundingClientRect` 实测）。
+   > 改这个尺寸时**一定要重新量标签与 `.shift-cell` 的高度**，别只看热区够不够大。
+
+3. **悬浮值班表里的班次时，左侧列表把该同学滚进可视区。**
+   入口是 `hoverScheduleStudent(sid, show)`（**值班表标签专用**），它先调
+   `highlightStudent()` 再调 `scrollStudentIntoView()`。
+   - **左侧列表项自己的 `mouseenter` 仍走 `highlightStudent()`，不滚动** ——
+     否则鼠标在列表边缘上下移动会把条目不停吸进视野，反而更晃。
+   - **只在目标「不在可视区」时才滚**（用户确认的口径）：按最近边手算最小滚动量，
+     已完整可见就一个像素都不动（实测划过一排班次不会让列表乱跳）。
+   - **滚动容器是 `#studentList` 本身**（它才是 `overflow-y:auto` 的那个），
+     改它的 `scrollTop` 而不是调 `scrollIntoView()`，避免连带滚动整页或其它容器；
+     结果再夹到 `[0, scrollHeight - clientHeight]`。
+   - 学生被搜索过滤掉时（§4.15）列表里没有该节点，传进来就是 `null`，安静返回。
+
+> **`harness.js` 为此新增了一个布局桩 `layoutStub`**：node 没有 CSS 引擎，
+> `getBoundingClientRect()` 默认返回全 0 矩形 —— 页面代码会判定「无布局信息 → 不动」，
+> 因此**既有断言完全不受影响**。要验证滚动数学的用例用
+> `layoutStub.setItemRect(sid, rect)` / `setBoxRect(rect)` 显式喂矩形，
+> 再调 `scrollStudentIntoView()` 并检查容器 `scrollTop`。
+> 但**「悬浮时到底还在不在动」「热区四角能不能点中」仍必须在真实浏览器里量**：
+> 前者靠 CSSOM（`document.styleSheets` 里的 `.student-tag:hover` 有没有 `transform`）
+> 加「悬浮前后 `getBoundingClientRect` 逐项相等」，后者靠 `document.elementFromPoint`
+> 在热区四角做命中测试（与 §6.7 同一手法）。
+
+测试见 `.selftest/test-layout.js` §L25d：CSSOM 层面的三条静态断言、滚动数学的
+「已可见 / 在上方 / 在下方 / 边界夹取 / null 与空矩形」五种情形、
+`hoverScheduleStudent` 的高亮与滚动、以及「左侧列表项自己不滚」。
+
 ---
 
 ## 5. 测试
@@ -729,7 +776,8 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 `.selftest/` 是一个**不依赖浏览器**的 Node 自测套件（各文件项数以 `bash .selftest/run-all.sh` 末行输出为准，这里不写死具体数字）：
 
 ```
-harness.js              最小 DOM / localStorage 桩（localStorage 仍保留以断言「页面不用它」）/ XLSX 桩
+harness.js              最小 DOM / localStorage 桩（localStorage 仍保留以断言「页面不用它」）/ XLSX 桩 /
+                                布局桩 layoutStub（默认全 0 矩形＝无布局信息，见 §4.16）
 test-model.js           模板模型、键解析、冲突推导、不持久化（§7.3）
 test-integration.js     排班、剪枝、渲染、导出、导入往返、每人每周上限与均衡性、
                                 排班锁定（§41，锁「位置」而非「人」）、弹窗层叠断言（§42，见 §6.7）、
@@ -741,7 +789,8 @@ test-integration.js     排班、剪枝、渲染、导出、导入往返、每�
                                 导入模板文件立即生效并自动开编辑器（§49，见 §4.12）
 test-layout.js          排班日分组（预设/自定义、模式往返、动态渲染与导出、未排班时的表格、
                                 分组只排单周/双周）、学号列表入场动画（只播一次 + 逐条错峰 + 就地更新，
-                                §L25b，见 §4.13）、学号列表搜索（§L25c，纯视图过滤，见 §4.15）
+                                §L25b，见 §4.13）、学号列表搜索（§L25c，纯视图过滤，见 §4.15）、
+                                悬浮体验（§L25d：无上移 / 锁热区 24×24 / 悬浮班次滚动定位，见 §4.16）
 run-all.sh              入口
 ```
 

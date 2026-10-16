@@ -1,6 +1,6 @@
 // 排班日分组自测：工作日/周末预设 ↔ 一周7天自由组合
 // 重点验证：向后兼容、分组结构规范化、模式往返不丢排班、渲染/导出/排班跟随动态分组
-const { g, ok, eq, section, summary, localStorage, el, writeFiles, rawHtml } = require('./harness.js');
+const { g, ok, eq, section, summary, localStorage, el, writeFiles, rawHtml, layoutStub } = require('./harness.js');
 
 const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
   name, courseId: `${name}_d${weekday}_p${begin}`, courseNum: 'C1', teacher: 'T', type: '必修',
@@ -701,6 +701,134 @@ ok(!/studentQuery/.test(g('String(fetchAllSchedules)')),
 g("state.studentQuery = '张'; loadStudentQuery();");
 eq(g('state.studentQuery'), '', 'loadStudentQuery 一律回到「不过滤」（不读存档）');
 eq(JSON.stringify(g('localStorage._dump()')), '{}', '搜索词不写入 localStorage');
+
+// ── L25d. 悬浮体验：删除上移、加大锁热区、悬浮班次时左列表滚动到该同学（见 AGENT.md §4.16） ──
+section('L25d. 悬浮体验：无上移 / 锁热区加大 / 悬浮班次滚动到该同学');
+
+const hoverCss = rawHtml();
+
+// ① 排班单元格里的学生标签悬浮**不再位移/缩放**
+const tagHover = /\.student-tag:hover\s*\{([^}]*)\}/.exec(hoverCss);
+ok(!!tagHover, 'CSS 里有 .student-tag:hover 规则');
+ok(tagHover && !/transform\s*:/.test(tagHover[1]),
+   '【需求】.student-tag:hover 不再声明 transform（上移+放大已删除）', tagHover && tagHover[1].trim());
+ok(tagHover && !/translateY/.test(tagHover[1]), '.student-tag:hover 里没有 translateY');
+// 但保留无位移的轻微反馈
+ok(tagHover && /box-shadow/.test(tagHover[1]), '悬浮仍保留阴影反馈（不改变几何）');
+// 锁定标签的 hover 不再需要「抵消 translateY」的反向声明
+const lockedHover = /\.student-tag\.locked:hover\s*\{([^}]*)\}/.exec(hoverCss);
+ok(lockedHover && !/transform/.test(lockedHover[1]),
+   '.student-tag.locked:hover 里已清掉用于抵消上移的 transform: none');
+// 拖拽落点反馈必须保留（别顺手删了）
+ok(/\.student-tag\.dragging\s*\{[^}]*animation\s*:\s*dragPulse/.test(hoverCss),
+   '拖拽中的 dragPulse 动画仍然保留（属落点反馈，不属悬浮动效）');
+ok(/@keyframes\s+dragPulse/.test(hoverCss), 'dragPulse 关键帧仍在');
+ok(/\.drop-available/.test(hoverCss), '可放置的反馈样式仍在');
+
+// ② 锁按钮热区加大到 24×24（图标本身只有 10px，原先可点区就是那 10px）
+const tagLockBtn = /\.student-tag\s+\.lock-btn\s*\{([^}]*)\}/.exec(hoverCss);
+ok(!!tagLockBtn, 'CSS 里有 .student-tag .lock-btn 规则');
+const lockCss = tagLockBtn ? tagLockBtn[1] : '';
+ok(/width\s*:\s*24px/.test(lockCss) && /height\s*:\s*24px/.test(lockCss),
+   '【需求】锁按钮热区加大到 24×24（原先约 10×10）', lockCss.trim().slice(0, 60));
+ok(/min-width\s*:\s*24px/.test(lockCss), '锁按钮带 min-width，热区不会被压回去');
+// 用负外边距抵消 padding 带来的布局增长 → 标签本身不会变大
+ok(/margin\s*:\s*[^;]*-4px/.test(lockCss), '用负横向 margin 抵掉热区增长（不撑宽标签）');
+// 纵向也要抵消：实测 24px 盒子会把标签从 26px 撑到 32px，整行随之变高
+ok(/-?\d+px\s+2px\s+-?\d+px\s+-4px/.test(lockCss) && /margin\s*:\s*-7px/.test(lockCss),
+   '【实测修正】用负纵向 margin 抵掉高度增长（否则标签 26px→32px、整行被撑高）', lockCss.trim().slice(0, 70));
+ok(/display\s*:\s*inline-flex/.test(lockCss) && /align-items\s*:\s*center/.test(lockCss),
+   '锁按钮仍是 flex 居中（图标在热区正中）');
+
+// ③ 悬浮班次 → 左列表滚动到该同学
+ok(hoverCss.includes('function hoverScheduleStudent'), '新增 hoverScheduleStudent()（悬浮班次专用）');
+ok(hoverCss.includes('function scrollStudentIntoView'), '新增 scrollStudentIntoView()（滚动数学）');
+ok(/onmouseenter="hoverScheduleStudent\('\$\{sid\}', true\)"/.test(hoverCss),
+   '值班表标签的 mouseenter 已接到 hoverScheduleStudent');
+// 左侧列表项仍用 highlightStudent（不在列表里滚动，否则鼠标在列表边缘移动会一直吸条目）
+ok(/class="student-item[^>]*onmouseenter="highlightStudent/.test(hoverCss),
+   '左侧列表项的 mouseenter 仍走 highlightStudent（不触发滚动）');
+ok(!/class="student-item[^>]*onmouseenter="hoverScheduleStudent/.test(hoverCss),
+   '左侧列表项没有被换成 hoverScheduleStudent（避免自己滚自己）');
+
+// 滚动数学：用 layoutStub 显式喂矩形（harness 没有 CSS 引擎）
+g(`state.students = [
+     {sid:'A',name:'甲',status:'ready',courses:[]},
+     {sid:'B',name:'乙',status:'ready',courses:[]},
+     {sid:'C',name:'丙',status:'ready',courses:[]}
+   ];
+   state.studentQuery = ''; _animatedSids = new Set(['A','B','C']);
+   renderStudentList();`);
+
+// 容器可视区：top 100，bottom 300（高 200）
+layoutStub.reset();
+layoutStub.setBoxRect({ top: 100, bottom: 300, left: 0, right: 300, width: 300, height: 200 });
+g("document.getElementById('studentList').scrollTop = 500;");
+g("document.getElementById('studentList').scrollHeight = 1000;");
+g("document.getElementById('studentList').clientHeight = 200;");
+
+// 情形一：目标已完整可见（150..180 落在 100..300 内）→ 一个像素都不动
+layoutStub.setItemRect('B', { top: 150, bottom: 180, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"B\"]'))");
+eq(g("document.getElementById('studentList').scrollTop"), 500, '目标已可见时不动滚动（避免划过时列表乱跳）');
+
+// 情形二：目标在可视区**下方** → 向下滚刚好够的距离（含 4px 余量）
+layoutStub.setItemRect('C', { top: 380, bottom: 410, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"C\"]'))");
+eq(g("document.getElementById('studentList').scrollTop"), 500 + (410 - (300 - 4)),
+   '目标在下方时向下滚「刚好露出来 + 4px 余量」的距离');
+
+// 情形三：目标在可视区**上方** → 向上滚
+g("document.getElementById('studentList').scrollTop = 500;");
+layoutStub.setItemRect('A', { top: 40, bottom: 70, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"A\"]'))");
+eq(g("document.getElementById('studentList').scrollTop"), 500 - (104 - 40),
+   '目标在上方时向上滚「刚好露出来 + 4px 余量」的距离');
+
+// 边界：不能滚出 [0, scrollHeight - clientHeight]
+g("document.getElementById('studentList').scrollTop = 10;");
+layoutStub.setItemRect('A', { top: 40, bottom: 70, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"A\"]'))");
+ok(g("document.getElementById('studentList').scrollTop") >= 0, '向上滚不会出现负的 scrollTop',
+   g("document.getElementById('studentList').scrollTop"));
+g("document.getElementById('studentList').scrollTop = 795;");   // max = 1000-200 = 800
+layoutStub.setItemRect('C', { top: 900, bottom: 930, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"C\"]'))");
+ok(g("document.getElementById('studentList').scrollTop") <= 800, '向下滚不会超过 maxScroll',
+   g("document.getElementById('studentList').scrollTop"));
+
+// 防御：传 null（学生被搜索过滤掉时就是这样）不报错
+g('scrollStudentIntoView(null)');
+ok(true, '传 null 时安静返回（搜索过滤掉的人不该触发滚动）');
+layoutStub.setItemRect('A', { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"A\"]'))");
+ok(true, '空矩形（无布局信息）时不报错');
+
+// hoverScheduleStudent：高亮仍照常生效，且被搜索过滤掉时不滚
+layoutStub.reset();
+layoutStub.setBoxRect({ top: 100, bottom: 300, left: 0, right: 300, width: 300, height: 200 });
+layoutStub.setItemRect('A', { top: 400, bottom: 430, left: 0, right: 300, width: 300, height: 30 });
+g("document.getElementById('studentList').scrollTop = 0;");
+g("document.getElementById('studentList').scrollHeight = 1000;");
+g("document.getElementById('studentList').clientHeight = 200;");
+g("hoverScheduleStudent('A', true)");
+ok(g("document.querySelector('.student-item[data-sid=\"A\"]').classList.contains('highlight-linked')"),
+   'hoverScheduleStudent 仍然高亮左侧对应条目');
+eq(g("document.getElementById('studentList').scrollTop"), 430 - (300 - 4),
+   'hoverScheduleStudent 触发了滚动定位（与 scrollStudentIntoView 同一口径）');
+g("hoverScheduleStudent('A', false)");
+ok(!g("document.querySelector('.student-item[data-sid=\"A\"]').classList.contains('highlight-linked')"),
+   '移出时取消高亮');
+eq(g("document.getElementById('studentList').scrollTop"), 430 - (300 - 4), '移出时不再滚动');
+
+// 被搜索过滤掉的人：列表里没有节点，hoverScheduleStudent 不报错也不滚
+g("setStudentQuery('不存在');");
+g("document.getElementById('studentList').scrollTop = 42;");
+g("hoverScheduleStudent('A', true)");
+eq(g("document.getElementById('studentList').scrollTop"), 42, '被搜索过滤掉时不触发滚动');
+g('clearStudentQuery()');
+
+layoutStub.reset();
 
 section('L26. 分组只配单周 / 只配双周：合法配置，全链路可用');
 

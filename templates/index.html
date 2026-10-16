@@ -836,9 +836,13 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   background: var(--primary-grad); color: #fff;
   box-shadow: 0 1px 3px rgba(37,99,235,.35);
 }
-.student-tag:hover { 
-  transform: translateY(-2px) scale(1.03); 
-  box-shadow: 0 6px 16px rgba(37,99,235,.42);
+/* 悬浮反馈**不做位移 / 缩放**（用户要求删除上移动画）：
+   原先这里是 `transform: translateY(-2px) scale(1.03)`，鼠标划过一排标签时整排都在动，
+   观感很跳（与 §4.13 第 2 条「.shift-cell:hover 不许 scale」是同一类问题）。
+   现在只保留阴影 / 亮度这类「不改变几何」的轻微反馈。
+   注意：拖拽相关动画（.dragging / dragPulse / .drop-available）是**落点反馈**，要保留。 */
+.student-tag:hover {
+  box-shadow: 0 4px 12px rgba(37,99,235,.42);
   filter: brightness(1.05);
 }
 .student-tag:active { 
@@ -862,21 +866,30 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   padding-left: 3px; line-height: 1;
 }
 .student-tag .remove-btn:hover { opacity: 1; }
-/* 锁定按钮：锁住「该同学 + 该班次」这个位置，重新排班不会改变它 */
+/* 锁定按钮：锁住「该同学 + 该班次」这个位置，重新排班不会改变它。
+   命中区域加大（用户要求「略微加大锁定的判定范围」）：图标本身只有 10px，
+   原先的可点区就是那 10px，很难点中。现在用 24×24 的触区 + 负外边距把热区撑开，
+   **不撑大**标签本身的布局（负 margin 抵消掉 padding 带来的尺寸增长）。 */
 .student-tag .lock-btn {
   cursor: pointer; font-size: 10px; line-height: 1;
-  margin-right: 4px; opacity: .7;
-  transition: opacity var(--transition);
-  display: inline-flex; align-items: center;
+  /* 负纵向 margin 抵消 24px 盒子带来的高度增长：实测标签会从 26px 涨到 32px，
+     把整行撑高、观感变化明显。加了 -7px 之后热区仍是 24×24，标签高度回到 26px。 */
+  margin: -7px 2px -7px -4px; opacity: .7;
+  transition: opacity var(--transition), background var(--transition);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; min-width: 24px;
+  border-radius: 50%;
 }
-.student-tag .lock-btn:hover { opacity: 1; }
+.student-tag .lock-btn:hover { opacity: 1; background: rgba(255,255,255,.22); }
 .student-tag.locked {
   background: var(--warning-grad);
   box-shadow: 0 1px 3px rgba(217,119,6,.45);
   cursor: default;
 }
-.student-tag.locked:hover { transform: none; box-shadow: 0 1px 3px rgba(217,119,6,.45); }
+/* 悬浮反馈已不再有位移，这里只需保持锁定配色（原先是用来抵消 translateY 的） */
+.student-tag.locked:hover { box-shadow: 0 1px 3px rgba(217,119,6,.45); filter: none; }
 .student-tag.locked .lock-btn { opacity: 1; }
+.student-tag.locked .lock-btn:hover { background: rgba(255,255,255,.28); }
 
 /* ── Student highlight on hover ────────── */
 /* 这里不能写死 border-radius：会把 .student-tag 的胶囊圆角（999px）覆盖成 4px，
@@ -1681,7 +1694,9 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
           右上角可在<strong>「值班表」</strong>（谁在值班）与<strong>「空课表」</strong>（每个时段谁有空）之间切换，单周 / 双周也在那里切换。<br>
           左侧「学号列表」上方的<strong>搜索框</strong>可按<strong>姓名或学号</strong>快速找人（支持只输一部分，
           英文姓名不分大小写）；它<strong>只过滤左侧列表的显示</strong>，不会把人从排班、课表或导出结果里去掉，
-          点 × 或按 Esc 即可恢复完整列表。</p>
+          点 × 或按 Esc 即可恢复完整列表。<br>
+          把鼠标移到右边某个班次的同学标签上，左侧列表会<strong>自动滚动到这位同学</strong>（已经看得见就不动），
+          方便人多了以后快速对照；点标签左侧的小锁图标可以锁定该位置，点 × 可把 TA 移出这个班次。</p>
         <p><strong>4. 连续排班</strong>：顶部<b>「编辑」菜单 →「连续排班」</b>开关决定同一人的班次怎么摆放。
           <strong>勾选</strong>＝尽量把班次连成片（同一天<b>首尾相接</b>的班次尽量给同一个人，相邻几天也尽量连着排）；
           <strong>不勾选</strong>（默认）＝反过来尽量分散，避免连班、也避免连着几天都排同一个人。
@@ -2499,6 +2514,57 @@ function highlightStudent(sid, show) {
     const cell = tag.closest('.shift-cell');
     if (cell) cell.classList.toggle('highlight-linked', show);
   });
+}
+
+/**
+ * 鼠标悬浮到**值班表里的班次标签**上时调用：高亮 + 把左侧对应同学滚进可视区。
+ *
+ * 与 `highlightStudent()` 分开是刻意的（用户要求「浮在班次上时列表滚到该同学」）：
+ * 左侧列表项自己的 mouseenter 仍走 `highlightStudent()`，**不触发滚动** ——
+ * 否则鼠标在列表边缘上下移动时会不停地把条目吸进视野，反而更晃。
+ */
+function hoverScheduleStudent(sid, show) {
+  highlightStudent(sid, show);
+  if (!show) return;
+  const listItem = document.querySelector(`.student-item[data-sid="${sid}"]`);
+  if (listItem) scrollStudentIntoView(listItem);
+}
+
+/**
+ * 把左侧学号列表里的某个条目滚进可视区（见 §4.16）。
+ *
+ * 三条口径：
+ *   1. **只在「不在可视区」时才滚**。按「最近边」语义手算最小滚动量：
+ *      条目已经完整可见就一个像素都不动 —— 否则鼠标划过一排班次时，
+ *      列表会跟着一跳一跳的（用户明确选了「只在目标不可见时才滚」）。
+ *   2. **滚动容器是 `#studentList` 本身**（它才是 `overflow-y:auto` 的那个），
+ *      用它的 scrollTop 而不是 scrollIntoView()，避免连带把整个页面/其它容器也滚了。
+ *   3. 条目被搜索过滤掉时列表里根本没有这个节点，调用方传进来的就是 null，
+ *      属正常状态，不做任何事（搜索时不该乱滚，见 §4.15）。
+ */
+function scrollStudentIntoView(listItem) {
+  if (!listItem || typeof listItem.getBoundingClientRect !== 'function') return;
+  const container = document.getElementById('studentList');
+  if (!container || typeof container.getBoundingClientRect !== 'function') return;
+
+  const itemRect = listItem.getBoundingClientRect();
+  const boxRect = container.getBoundingClientRect();
+  if (!itemRect || !boxRect) return;
+  if ((itemRect.height === 0 && boxRect.height === 0) || boxRect.height === 0) return;   // 无布局信息（自测桩）→ 不动
+
+  const PAD = 4;   // 上下各留一点余量，别让条目紧贴边框
+
+  let delta = 0;
+  if (itemRect.top < boxRect.top + PAD) {
+    delta = itemRect.top - (boxRect.top + PAD);              // 在可视区上方 → 向上滚
+  } else if (itemRect.bottom > boxRect.bottom - PAD) {
+    delta = itemRect.bottom - (boxRect.bottom - PAD);        // 在可视区下方 → 向下滚
+  }
+  if (delta === 0) return;                                   // 已经完整可见：一个像素都不动
+
+  const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+  const next = Math.min(maxScroll, Math.max(0, (container.scrollTop || 0) + delta));
+  if (next !== container.scrollTop) container.scrollTop = next;
 }
 
 function formatTime(minutes) {
@@ -4380,7 +4446,7 @@ function renderSchedule() {
       const locked = isLocked(sid, key, wt);
       const lockTitle = locked ? '已锁定：重新排班不会改变此处（点击解锁）' : '锁定：重新排班时此处保持不变';
       const lockIcon = locked ? LOCK_ICON_CLOSED : LOCK_ICON_OPEN;
-      cell += `<span class="student-tag${locked ? ' locked' : ''}" draggable="${locked ? 'false' : 'true'}" data-sid="${sid}" data-key="${key}"${locked ? ' data-locked="1"' : ''} ondragstart="onDragStart(event)" ondragend="onDragEnd(event)" onclick="showStudentCourse('${sid}')" onmouseenter="highlightStudent('${sid}', true)" onmouseleave="highlightStudent('${sid}', false)" title="${locked ? `${sid}（已锁定）` : sid}"><span class="lock-btn" onclick="event.stopPropagation();toggleLock('${key}','${sid}')" title="${lockTitle}">${lockIcon}</span>${nm}<span class="remove-btn" onclick="event.stopPropagation();removeFromShift('${key}','${sid}')">×</span></span>`;
+      cell += `<span class="student-tag${locked ? ' locked' : ''}" draggable="${locked ? 'false' : 'true'}" data-sid="${sid}" data-key="${key}"${locked ? ' data-locked="1"' : ''} ondragstart="onDragStart(event)" ondragend="onDragEnd(event)" onclick="showStudentCourse('${sid}')" onmouseenter="hoverScheduleStudent('${sid}', true)" onmouseleave="hoverScheduleStudent('${sid}', false)" title="${locked ? `${sid}（已锁定）` : sid}"><span class="lock-btn" onclick="event.stopPropagation();toggleLock('${key}','${sid}')" title="${lockTitle}">${lockIcon}</span>${nm}<span class="remove-btn" onclick="event.stopPropagation();removeFromShift('${key}','${sid}')">×</span></span>`;
     }
     return cell + '</div>';
   });
