@@ -261,7 +261,7 @@ API 端点：
 
 | 状态 | 持久化 | 含义 |
 | --- | --- | --- |
-| `state.maxShiftsEnabled` | **无**（只在内存，见 §7.3） | 左侧「限制每人每周班次」开关；**默认 `false`（不勾选）** |
+| `state.maxShiftsEnabled` | **无**（只在内存，见 §7.3） | 「编辑」菜单里的「限制每人每周班次」开关；**默认 `false`（不勾选）** |
 | `state.maxShiftsPerWeek` | **无**（只在内存，见 §7.3） | 上限数值，默认 `MAX_SHIFTS_DEFAULT = 3` |
 
 - `maxShiftsLimit()` 是**唯一**的上限口径：开关未勾选 → `Infinity`；勾选 → `getMaxShiftsPerWeek()`
@@ -313,7 +313,7 @@ API 端点：
 
 ### 4.10 连续 / 分散排班偏好（勾选式软偏好，绝不反噬均衡）
 
-左侧「连续排班」开关（`state.continuousShifts`，**只在内存，不持久化**，见 §7.3）：
+「编辑」菜单里的「连续排班」开关（`state.continuousShifts`，**只在内存，不持久化**，见 §7.3 / §4.12）：
 **勾选 = 尽量让同一人的班次连成片，不勾选（默认）= 尽量分散**。这是用户明确确认的口径。
 
 判分口径（「连续分」，越高越连续），全部落在 `continuityScoreOf(occ, ctx)`：
@@ -485,15 +485,17 @@ API 端点：
 `totalLoadOf` 对照、陈旧键按 0 班计、明细排序与字段完整性、清空排班后名单仍在、
 无数据时的提示行、以及空课表不加人员表。
 
-### 4.12 顶部菜单栏：导入 / 导出 / 主题 / 指南的**唯一可见入口**
+### 4.12 顶部菜单栏：导入 / 导出 / 排班设置 / 主题 / 指南的**唯一可见入口**
 
-`<body>` 的第一个子元素是 `.top-menubar`，三个一级菜单 `#menuFile` / `#menuPersonal` / `#menuAbout`，
-二级菜单项放在各自的 `.menu-panel` 里。**用户要求把原来散落在左侧面板与表头的按钮全部收进这里**
-（原位置按钮已删除，不要「顺手」加回去）：
+`<body>` 的第一个子元素是 `.top-menubar`，**四个**一级菜单
+`#menuFile` / `#menuEdit` / `#menuPersonal` / `#menuAbout`（`MENU_IDS` 与 DOM 顺序一致，
+`←`/`→` 导航按这个顺序走），二级菜单项放在各自的 `.menu-panel` 里。
+**用户要求把原来散落在左侧面板与表头的按钮全部收进这里**（原位置按钮已删除，不要「顺手」加回去）：
 
 | 一级菜单 | 二级菜单项（顺序即 DOM 顺序） |
 | --- | --- |
-| **文件** | 导入学号…（`menuRun(openSidImport)`）、导入数据…、导入模板…、导出值班表、导出空课表、导出数据、导出值班模板、**编辑值班模板…**（`menuRun(openTemplateEditor)`）、**重置排班…**（`menuRun(resetSchedule)`）、清空学号与排班… |
+| **文件** | 导入学号…（`menuRun(openSidImport)`）、导入数据…、导入模板…、导出值班表、导出空课表、导出数据、导出值班模板、重置排班…（`menuRun(resetSchedule)`）、清空学号与排班… |
+| **编辑** | **编辑值班模板…**（`menuRun(openTemplateEditor)`）、**限制每人每周班次**（开关 + 数值框）、**连续排班**（开关） |
 | **个性化** | 深夜模式 / 日间模式 / 跟随系统（当前项打勾） |
 | **关于** | 使用指南 / 软件信息 |
 
@@ -502,14 +504,16 @@ API 端点：
 真正触发它的是弹窗底部的「导入」按钮。**别再把它接回 `loadStudents`**，那样会读一个已经不在
 左侧面板的 textarea。
 
-左侧面板只保留：学号列表、进度条、「限制每人每周班次」开关、连续排班开关、
-开始排班 / 刷新课表两个按钮（以及一组 `display:none` 的兼容控件）。
+左侧面板只保留：学号列表、进度条、开始排班 / 刷新课表两个按钮（以及一组 `display:none` 的兼容控件）。
+**两个排班开关（上限 / 连续排班）已整块搬进「编辑」菜单**，左侧面板里**不再有 `.opt-row`**——
+别为了「方便看到当前值」把开关复制回左侧（用户明确要求放到编辑栏下；搬家 ≠ 复制）。
 **左侧已无 `.panel-header`**（排班标题由菜单栏的 `.menu-brand` 承担），
 **表头 `.header-actions` 整块已删除**（原来在表头右侧的「值班模板 / 重置排班」按钮随之消失）——
 表头现在只剩视图切换与单双周切换，右上角和左下角都**没有**「重置排班」。
-**导入 / 导出 / 编辑模板 / 重置排班**类入口一律只在「文件」菜单里，原位置按钮均已移除。
+**导入 / 导出 / 重置排班**类入口只在「文件」菜单里，**模板编辑与两个开关**只在「编辑」菜单里，
+原位置按钮均已移除。
 
-五条必须守住的点：
+六条必须守住的点：
 
 1. **`menuRun(fn)` 必须先收起菜单再执行动作。** 顺序颠倒会让下拉面板浮在即将打开的弹窗之上
    （`.menu-panel` 的 z-index 高于 `.modal-overlay`），表现是「点了菜单项，弹窗被菜单挡住」。
@@ -520,12 +524,17 @@ API 端点：
 3. **菜单项与面板按钮的启用状态必须同步。** `updateButtons()` 里既设 `btnExportDuty` / `btnExportFree`，
    也设 `menuExportDuty` / `menuExportFree` 的 `disabled`。新增禁用逻辑时两处都要跟，否则会出现
    「菜单项灰着、隐藏兼容按钮却可点」的不一致。
-4. **切换主题只有「个性化」菜单一个入口**（深夜模式 / 日间模式 / 跟随系统，三选一、当前项打勾）。
+4. **「编辑」菜单里的两个开关不能走 `menuRun`。** `menuRun` 会先收起菜单，而开关**不打开任何弹窗**，
+   于是用户点一下只看到菜单消失、看不到勾选状态的变化。它们的 `onchange` 直接调
+   `setMaxShiftsEnabled(this.checked)` / `setContinuousScheduling(this.checked)`，
+   菜单保持展开（点菜单外 / 点另一个一级菜单仍照常收起，那条逻辑在文件末尾的 document click 处理里，
+   与 `menuRun` 无关）。给菜单加新控件时照此判断：**会弹窗 → 走 `menuRun`；只改状态 → 直接调**。
+5. **切换主题只有「个性化」菜单一个入口**（深夜模式 / 日间模式 / 跟随系统，三选一、当前项打勾）。
    历史上菜单栏右侧曾有一个循环切换的 `#themeToggle` 快捷按钮，**已按用户要求删除**，
    连带 `.theme-btn` 样式与 `toggleTheme()` / `updateThemeIcon()` 一起删掉了 ——
    不要再把它们加回来。菜单对勾由 `refreshThemeMenuUi()` 统一维护，**由 `applyTheme()` 直接调用**；
    因此改了主题就一定要走 `applyTheme()`，否则对勾不会更新（跟随系统时系统深浅色变化也走它）。
-5. **值班模板弹窗 `#templateModal` 故意不监听「点击外部关闭」**（用户要求防误触，见 §6.7）。
+6. **值班模板弹窗 `#templateModal` 故意不监听「点击外部关闭」**（用户要求防误触，见 §6.7）。
    模板里的每次改动都只写在草稿 `state.tplDraft` 上（深拷贝自 `state.template`），
    `closeTemplateEditor()` 会把草稿丢掉；
    如果点一下遮罩就关窗，用户刚改的整套模板会**无声作废**。
@@ -549,9 +558,12 @@ API 端点：
 三个字段由 `openAbout()` 动态填充（`APP_VERSION`、`APP_BUILD_DATE`、`window.location.origin`）。
 **发版时记得同时改 `APP_VERSION` 与 `APP_BUILD_DATE`。**
 
-测试见 `.selftest/test-integration.js` §45：三个一级菜单与各项接线、导出项的禁用同步、
+测试见 `.selftest/test-integration.js` §45：四个一级菜单与各项接线、导出项的禁用同步、
 主题三态与对勾位置、`menuRun` 先收菜单再执行、`←`/`→`/`Esc` 键盘导航、菜单栏与左侧面板的
-z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以及提示条指向「文件」菜单。
+z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以及提示条指向「文件」菜单；
+**§48** 单独守「编辑」菜单：三项都在面板内、「编辑值班模板…」从「文件」菜单**只搬一次**、
+左侧面板不再有 `.opt-row`、两个开关未包 `menuRun`（点一下菜单不收起）、
+`syncMaxShiftsInput()` / `syncContinuousInput()` 在菜单里照常同步。
 
 ### 4.13 界面动效是「纯 CSS 装饰层」，不得承载任何逻辑
 
@@ -639,7 +651,7 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 
 1. `#guideContent`（程序内「关于 → 使用指南」）
 2. `README.md`
-3. 左侧面板两个开关下的 `#maxShiftsHint` / `#continuousHint` 文案（由
+3. 「编辑」菜单两个开关下的 `#maxShiftsHint` / `#continuousHint` 文案（由
    `refreshMaxShiftsHint()` / `syncContinuousInput()` 动态写入）
 
 > 提醒用户「**数据不会自动保留、排完班要自己导出 JSON**」的那段提示必须留在使用指南里

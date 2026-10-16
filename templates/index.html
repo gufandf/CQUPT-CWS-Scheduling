@@ -212,6 +212,20 @@ body {
   z-index: 101;
 }
 .menu.open .menu-panel { display: block; }
+/* 「编辑」菜单里放了开关 + 数值框，比纯文字项宽一些 */
+.menu-panel-wide { min-width: 250px; }
+/*
+ * 「编辑」菜单里的开关行（复用 .opt-row 的开关外观）。
+ * 外层已经是卡片底色的下拉面板，所以去掉 .opt-row 自带的边框与阴影，
+ * 只在 hover 时给一层淡淡的底色，观感与上面的 .menu-item 一致。
+ */
+.menu-panel .menu-opt {
+  background: transparent; border-color: transparent; box-shadow: none;
+  padding: 7px 12px; border-radius: var(--radius-sm);
+  align-items: center;
+}
+.menu-panel .menu-opt:hover { background: var(--primary-light); border-color: transparent; }
+.menu-panel .menu-opt input[type="number"] { margin-left: auto; }
 .menu-item {
   display: flex; align-items: center; gap: 8px; width: 100%;
   padding: 8px 12px; border: none; border-radius: var(--radius-sm);
@@ -1378,10 +1392,47 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
       <button class="menu-item" role="menuitem" onclick="menuRun(exportData)">导出数据</button>
       <button class="menu-item" role="menuitem" onclick="menuRun(exportTemplateFile)">导出值班模板</button>
       <div class="menu-sep"></div>
-      <button class="menu-item" role="menuitem" onclick="menuRun(openTemplateEditor)">编辑值班模板…</button>
-      <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick="menuRun(resetSchedule)">重置排班…</button>
       <button class="menu-item" role="menuitem" onclick="menuRun(clearAll)">清空学号与排班…</button>
+    </div>
+  </div>
+
+  <!-- ── 编辑 ── -->
+  <!-- 值班模板编辑与两个排班偏好开关都收在这里（用户要求「放到编辑栏下的二级菜单」）。
+       注意：面板里的开关**不**走 menuRun —— menuRun 会先收起菜单，而开关又不打开弹窗，
+       用户就看不到勾选状态的变化。开关项直接调 set* 函数，菜单保持展开；
+       点菜单外 / 点另一个一级菜单仍照常收起（见文档末尾的 document click 处理）。 -->
+  <div class="menu" id="menuEdit">
+    <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+            onclick="toggleMenu('menuEdit', event)">编辑<span class="menu-caret">▾</span></button>
+    <div class="menu-panel menu-panel-wide" role="menu">
+      <button class="menu-item" role="menuitem" onclick="menuRun(openTemplateEditor)">编辑值班模板…</button>
+      <div class="menu-sep"></div>
+      <!-- 「限制每人每周班次」：开关 + 数值框（勾选后才生效，未勾选时数值框置灰） -->
+      <label class="opt-row menu-opt" for="maxShiftsToggle"
+             title="勾选：每人每周的班次数不超过右侧设定值（单周、双周各自单独计数）；不勾选：不限每人班次">
+        <input type="checkbox" id="maxShiftsToggle" onchange="setMaxShiftsEnabled(this.checked)">
+        <span class="opt-switch" aria-hidden="true"></span>
+        <span class="opt-text">
+          <strong>限制每人每周班次</strong>
+          <small id="maxShiftsHint">不勾选：不限每人班次</small>
+        </span>
+        <input type="number" id="maxShiftsInput" min="1" max="99" step="1" value="3"
+               title="每人每周最多班次（1~99）"
+               onclick="event.stopPropagation()"
+               oninput="setMaxShiftsPerWeek(this.value)"
+               onchange="setMaxShiftsPerWeek(this.value, {normalize:true})">
+      </label>
+      <!-- 「连续排班」：勾选 = 尽量连班，不勾选 = 尽量分散 -->
+      <label class="opt-row menu-opt" for="continuousToggle"
+             title="勾选：尽量把同一人的班次连在一起（同一天连班、相邻几天都来）；不勾选：尽量分散到不同时段与日期">
+        <input type="checkbox" id="continuousToggle" onchange="setContinuousScheduling(this.checked)">
+        <span class="opt-switch" aria-hidden="true"></span>
+        <span class="opt-text">
+          <strong>连续排班</strong>
+          <small id="continuousHint">未勾选：尽量把同一人的班次分散开</small>
+        </span>
+      </label>
     </div>
   </div>
 
@@ -1434,31 +1485,8 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         <div class="fill" id="progressFill"></div>
       </div>
 
-      <!-- 「每人每周最多班次」改成开关（与「连续排班」同款），勾选后才套用上限 -->
-      <label class="opt-row" for="maxShiftsToggle"
-             title="勾选：每人每周的班次数不超过右侧设定值（单周、双周各自单独计数）；不勾选：不限每人班次">
-        <input type="checkbox" id="maxShiftsToggle" onchange="setMaxShiftsEnabled(this.checked)">
-        <span class="opt-switch" aria-hidden="true"></span>
-        <span class="opt-text">
-          <strong>限制每人每周班次</strong>
-          <small id="maxShiftsHint">不勾选：不限每人班次</small>
-        </span>
-        <input type="number" id="maxShiftsInput" min="1" max="99" step="1" value="3"
-               title="每人每周最多班次（1~99）"
-               onclick="event.stopPropagation()"
-               oninput="setMaxShiftsPerWeek(this.value)"
-               onchange="setMaxShiftsPerWeek(this.value, {normalize:true})">
-      </label>
-
-      <label class="opt-row" for="continuousToggle"
-             title="勾选：尽量把同一人的班次连在一起（同一天连班、相邻几天都来）；不勾选：尽量分散到不同时段与日期">
-        <input type="checkbox" id="continuousToggle" onchange="setContinuousScheduling(this.checked)">
-        <span class="opt-switch" aria-hidden="true"></span>
-        <span class="opt-text">
-          <strong>连续排班</strong>
-          <small id="continuousHint">未勾选：尽量把同一人的班次分散开</small>
-        </span>
-      </label>
+      <!-- 「限制每人每周班次」与「连续排班」两个开关已搬到顶部「编辑」菜单
+           （用户要求；见 §4.12）。左侧面板不再有这两个 .opt-row。 -->
 
       <div class="btn-group" style="flex-direction:column;gap:6px;margin-top:auto;">
         <button class="btn btn-success" id="btnSchedule" onclick="runSchedule()" disabled style="width:100%;justify-content:center;padding:12px;">
@@ -1599,15 +1627,16 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
     <div class="modal-body" id="guideContent">
       <div style="line-height:1.8;color:var(--text-secondary);">
         <p><strong>1. 导入学号</strong>：点顶部<b>「文件」菜单 → 导入学号…</b>，在弹出的窗口里粘贴 10 位学号（每行一个）后点「导入」。
-          导入 / 导出数据、导入 / 导出值班模板、编辑值班模板、重置排班、导出值班表 / 空课表，也都在这个「文件」菜单里。</p>
+          导入 / 导出数据、导入 / 导出值班模板、重置排班、导出值班表 / 空课表，都在「文件」菜单里；
+          <b>编辑值班模板</b>与两个排班开关在<b>「编辑」菜单</b>里。</p>
         <p><strong>2. 开始排班</strong>：自动获取课表并智能分配值班，<strong>无论是否限制班次，都会尽量让每人的班次数相近</strong>。
-          <strong>要不要限制每人每周班次数，由左侧「限制每人每周班次」开关决定</strong>：
+          <strong>要不要限制每人每周班次数，由顶部「编辑」菜单 →「限制每人每周班次」开关决定</strong>：
           不勾选＝谁空谁上、不限班次；勾选＝每人每周不超过右侧填写的数值（单周、双周各自单独计数）。
           课表冲突与班次人数上限始终都会遵守。</p>
         <p><strong>3. 查看/调整</strong>：右侧表格<strong>始终显示当前值班模板的时段</strong>（未排班时人数显示为 0/N），
           可<strong>拖拽</strong>学生标签到其他班次调整，也可以直接把左侧的同学拖进格子手动排班。
           右上角可在<strong>「值班表」</strong>（谁在值班）与<strong>「空课表」</strong>（每个时段谁有空）之间切换，单周 / 双周也在那里切换。</p>
-        <p><strong>4. 连续排班</strong>：左侧的「连续排班」开关决定同一人的班次怎么摆放。
+        <p><strong>4. 连续排班</strong>：顶部<b>「编辑」菜单 →「连续排班」</b>开关决定同一人的班次怎么摆放。
           <strong>勾选</strong>＝尽量把班次连成片（同一天<b>首尾相接</b>的班次尽量给同一个人，相邻几天也尽量连着排）；
           <strong>不勾选</strong>（默认）＝反过来尽量分散，避免连班、也避免连着几天都排同一个人。
           这项只是「尽量」的偏好：算法只做<b>不改变任何人班次数</b>的等价交换，因此在满足它的同时
@@ -1623,7 +1652,7 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
           左边锁定的同学会显示为琥珀色。<br>
           两种锁定都会随「导出/导入数据」一起保存。</p>
         <p><strong>6. 课表管理</strong>：点击学生姓名查看课表，可<strong>忽略</strong>特定课程后重新排班。</p>
-        <p><strong>7. 值班模板</strong>：顶部<b>「文件」菜单 → 编辑值班模板…</b>可自定义每个班次的<strong>值班时间、值班人数、单双周</strong>，
+        <p><strong>7. 值班模板</strong>：顶部<b>「编辑」菜单 → 编辑值班模板…</b>可自定义每个班次的<strong>值班时间、值班人数、单双周</strong>，
           自由<strong>添加/删除/排序</strong>班次，并单独设置与该时段<strong>冲突的课程节次</strong>。<br>
           <strong>排班日分组</strong>支持两种模式：「工作日 / 周末」为预设两组；「一周 7 天自由组合」可自定义分组数量、
           名称与每组包含的星期（例如周一周二一组、周三到周日一组），每组各自一套班次。
@@ -2292,9 +2321,9 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 });
 
 // ============================================================
-//  顶部菜单栏（文件 / 个性化 / 关于）
+//  顶部菜单栏（文件 / 编辑 / 个性化 / 关于）
 // ============================================================
-const MENU_IDS = ['menuFile', 'menuPersonal', 'menuAbout'];
+const MENU_IDS = ['menuFile', 'menuEdit', 'menuPersonal', 'menuAbout'];
 
 /** 当前展开的一级菜单 id（null = 全部收起） */
 let openMenuId = null;
@@ -3263,7 +3292,7 @@ function initAssignments() {
  * 每人每周最多班次上限。0 = 不限制。
  *
  * 语义（用户确认，见 AGENT.md §4.8）：
- *   - 上限由左侧「限制每人每周班次」开关控制（`state.maxShiftsEnabled`）：
+ *   - 上限由「编辑」菜单里的「限制每人每周班次」开关控制（`state.maxShiftsEnabled`）：
  *     勾选才套用数值，不勾选一律不限制（等价于旧版「开始排班」）；
  *   - 口径是「每周」：单周、双周各自单独计数；
  *   - 无论是否套用上限，都尽量让每人的班次数相差不大（极差越小越好）。
@@ -3947,7 +3976,7 @@ function countEmptySlots(assignments) {
 /**
  * 排班主入口（由左侧「开始排班」按钮触发）。
  *
- * 用户已要求去掉单独的「均衡排班」按钮：每人每周上限改为左侧的一个开关
+ * 用户已要求去掉单独的「均衡排班」按钮：每人每周上限改为「编辑」菜单里的一个开关
  * （`state.maxShiftsEnabled` + `state.maxShiftsPerWeek`，见 §4.8），
  * 因此这里**不再有模式参数** —— 上限是否生效完全由开关决定。
  *
@@ -6029,7 +6058,7 @@ document.addEventListener('keydown', (e) => {
     }
     closeModal();
   }
-  // Ctrl+Enter 触发排班（上限是否生效由左侧「限制每人每周班次」开关决定）
+  // Ctrl+Enter 触发排班（上限是否生效由「编辑」菜单里的「限制每人每周班次」开关决定）
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     if (state.students.length > 0) runSchedule();
   }
