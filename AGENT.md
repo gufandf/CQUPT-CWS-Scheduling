@@ -136,7 +136,7 @@ API 端点：
 | `validateDraft()` / `templateWarnings()` / `saveTemplateEditor()` | 保存前校验（阻断）/ 提示（不阻断）/ 应用模板 |
 | `exportDutySchedule()` / `exportFreeSchedule()` / `exportData()` | 导出 |
 | `buildPersonSheet()` | 「人员表」工作表（按人聚合班次，随值班表导出），见 §4.11 |
-| `handleImportFile()` / `handleTemplateFileImport()` | 导入 |
+| `handleImportFile()` / `handleTemplateFileImport()` / `applyImportedTemplate()` | 导入数据 / 导入模板文件（后者**立即生效并自动打开模板编辑器**，见 §4.12） |
 | `MENU_IDS` / `openMenuId` / `setMenuOpen()` / `toggleMenu()` / `menuRun()` | 顶部菜单栏的一级菜单清单、展开状态与开合逻辑，见 §4.12 |
 | `refreshThemeMenuUi()` | 把当前主题同步到「个性化」菜单的对勾（**故意不叫 `syncThemeMenu()`**，理由见 §4.12） |
 | `openAbout()` / `closeAbout()` / `APP_VERSION` / `APP_BUILD_DATE` | 「关于 → 软件信息」弹窗，见 §4.12 |
@@ -558,12 +558,27 @@ API 端点：
 三个字段由 `openAbout()` 动态填充（`APP_VERSION`、`APP_BUILD_DATE`、`window.location.origin`）。
 **发版时记得同时改 `APP_VERSION` 与 `APP_BUILD_DATE`。**
 
+**「导入模板…」必须「立即生效 + 自动打开编辑器」**（曾是一个 bug，别改回去）：
+`handleTemplateFileImport()` 原来只把解析结果写进草稿 `state.tplDraft` 并弹一条 toast，
+**既没保存也没打开编辑器** —— 弹窗是 `display:none`，`renderTemplateEditor()` 写的 HTML
+用户根本看不到，界面就是「点了没反应」；而且草稿只活在内存里，用户下次打开编辑器时
+`openTemplateEditor()` 会用当前模板重新深拷贝，把刚导入的内容**静默覆盖**。
+现在统一走 `applyImportedTemplate(parsed)`：
+校验通过 → 直接写 `state.template` + `pruneInvalidAssignments()` + 打开编辑器（草稿换成新模板）；
+有**阻断性**错误 → 不直接生效（避免把坏模板套到现有排班上），只载入草稿并标红让用户修正。
+> 注意 `openTemplateEditor()` **不能**在这里复用：它会用 `state.template` 深拷贝覆盖掉刚导入的草稿。
+> 另外 `normalizeTemplate()` 会补齐空名称、丢弃时间非法的班次，因此能真正走到阻断分支的
+> 现实情况基本只有「某分组所有班次都被停用」——写测试时别拿空名称当反例，它不会红。
+
 测试见 `.selftest/test-integration.js` §45：四个一级菜单与各项接线、导出项的禁用同步、
 主题三态与对勾位置、`menuRun` 先收菜单再执行、`←`/`→`/`Esc` 键盘导航、菜单栏与左侧面板的
 z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以及提示条指向「文件」菜单；
 **§48** 单独守「编辑」菜单：三项都在面板内、「编辑值班模板…」从「文件」菜单**只搬一次**、
 左侧面板不再有 `.opt-row`、两个开关未包 `menuRun`（点一下菜单不收起）、
-`syncMaxShiftsInput()` / `syncContinuousInput()` 在菜单里照常同步。
+`syncMaxShiftsInput()` / `syncContinuousInput()` 在菜单里照常同步；
+**§49** 守本节这条导入修复：`applyImportedTemplate()` 立即写入 `state.template`、
+自动打开弹窗、编辑器正文与草稿都来自文件、阻断性错误时不套用但仍开编辑器
+（已用注入原 bug 的方式确认这一组断言真的会红 —— 10 条同时变红）。
 
 ### 4.13 界面动效是「纯 CSS 装饰层」，不得承载任何逻辑
 
@@ -678,7 +693,9 @@ test-integration.js     排班、剪枝、渲染、导出、导入往返、每�
                                 连续 / 分散排班偏好（§43，见 §4.10）、
                                 连续分缓存与朴素实现等价（§43b，见 §4.10 / §5.1）、
                                 人员表（§44，见 §4.11）、顶部菜单栏（§45，见 §4.12）、
-                                学生锁（§47，锁「人」——自动排班不添加也不修改，见 §4.9.1）
+                                学生锁（§47，锁「人」——自动排班不添加也不修改，见 §4.9.1）、
+                                「编辑」菜单（§48，见 §4.12）、
+                                导入模板文件立即生效并自动开编辑器（§49，见 §4.12）
 test-layout.js          排班日分组（预设/自定义、模式往返、动态渲染与导出、未排班时的表格、
                                 分组只排单周/双周）、学号列表入场动画（只播一次 + 逐条错峰 + 就地更新，
                                 §L25b，见 §4.13）
