@@ -8,7 +8,7 @@ const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
   periods: Array.from({ length: period }, (_, i) => begin + i), weeks,
   oddWeeks: weeks.filter(w => w % 2 === 1), evenWeeks: weeks.filter(w => w % 2 === 0),
   hasOdd: weeks.some(w => w % 2 === 1), hasEven: weeks.some(w => w % 2 === 0),
-  isFullDay: period >= 8, ignored: !!ignored, autoIgnored: false,
+  isFullDay: period >= 8, ignored: !!ignored,
 });
 
 // ── 后续 then 之间共享的 helper（在 §32 起赋值） ──
@@ -2346,7 +2346,183 @@ Promise.resolve(run).then(() => {
     g('loadExportSettings()');
     eq(g('state.exportSeparator'), '、', '导出设置不持久化，回到默认顿号');
     eq(JSON.stringify(g('localStorage._dump()')), '{}', '导出设置不写入 localStorage');
-    summary();
+
+    // ── 51. 课程忽略只有手动一种来源（自动忽略已按用户要求删除，见 AGENT.md §4.18） ──
+    // 用户要求：删除课程自动忽略功能，仅允许手动忽略。
+    // 因此 CONFIG.ignoreCourseKeywords、18 周及以后规则、parseCourses 的 skipAutoIgnore
+    // 参数、course.autoIgnored 字段全部必须消失；并且**刷新课表绝不能清空手动忽略**。
+    section('51. 课程忽略只有手动一种来源（无自动忽略）');
+    const igSrc = rawHtml();
+    // 同样先剥注释，避免说明文字造成误判
+    const igSrcNoComment = igSrc
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+    ok(!/ignoreCourseKeywords/.test(igSrcNoComment),
+       '源码中不再出现 ignoreCourseKeywords（自动忽略关键词已删除）');
+    ok(!/autoIgnored/.test(igSrcNoComment),
+       '源码中不再出现 autoIgnored 字段（自动忽略标记已删除）');
+    ok(!/skipAutoIgnore/.test(igSrcNoComment),
+       'parseCourses 不再有 skipAutoIgnore 参数');
+    ok(/function parseCourses\(data, sid\)/.test(igSrcNoComment),
+       'parseCourses 只剩 (data, sid) 两个参数');
+    ok(!/resetIgnoredCourses/.test(igSrcNoComment),
+       '旧的 resetIgnoredCourses 已改名，不再残留');
+    ok(/function clearIgnoredCourses\(\)/.test(igSrcNoComment),
+       '「清除忽略」由 clearIgnoredCourses() 承担');
+    ok(!/state\.ignoredCourses\[student\.sid\]\.clear\(\)/.test(igSrcNoComment),
+       '刷新课表路径不再清空手动忽略标记（会被 parseCourses 重新套用）');
+    ok(/const manualSet = state\.ignoredCourses\[s\.sid\]/.test(igSrcNoComment),
+       '导出数据以「手动忽略集合」为准');
+
+    // CONFIG 上确实没有这个字段了（行为断言，不只是字符串）
+    eq(g('typeof CONFIG.ignoreCourseKeywords'), 'undefined', 'CONFIG 上已无 ignoreCourseKeywords');
+
+    // 课表弹窗底部：没有「重新排班」按钮（注释里提到不算），按钮接 clearIgnoredCourses
+    const modalHtml = igSrc
+      .slice(igSrc.indexOf('id="courseModal"'), igSrc.indexOf('id="confirmModal"'))
+      .replace(/<!--[\s\S]*?-->/g, '');
+    ok(!/重新排班/.test(modalHtml), '课表弹窗里不再有「重新排班」按钮');
+    ok(modalHtml.includes('clearIgnoredCourses()'), '课表弹窗的「清除忽略」接 clearIgnoredCourses()');
+    ok(modalHtml.includes('清除忽略'), '按钮文案为「清除忽略」');
+
+    // ── 行为：parseCourses 绝不自动忽略（哪怕课程名含「实训」、周次全在 18 周后）──
+    const igRaw = [
+      { course: '实训A', class_id: 'C1', hash_day: 0, begin_lesson: 3, period: 2, week: [1, 2, 3],
+        course_num: 'C1', teacher: 'T', type: '必修', classroom: '101', rawWeek: '1-3周' },
+      { course: '高数', class_id: 'C2', hash_day: 2, begin_lesson: 3, period: 2, week: [1, 2, 3],
+        course_num: 'C2', teacher: 'T', type: '必修', classroom: '102', rawWeek: '1-3周' },
+      { course: '实践B', class_id: 'C3', hash_day: 1, begin_lesson: 1, period: 2, week: [18, 19],
+        course_num: 'C3', teacher: 'T', type: '必修', classroom: '103', rawWeek: '18-19周' },
+    ];
+    g('state.ignoredCourses = {};');
+    g(`state._igRaw = ${JSON.stringify(igRaw)};`);
+    eq(g('JSON.stringify(parseCourses(state._igRaw, "2025210001").map(c => c.ignored))'),
+       '[false,false,false]',
+       '关键词课「实训A」与 18 周后的「实践B」都不再被自动忽略');
+    ok(g('JSON.stringify(parseCourses(state._igRaw, "2025210001")[0])').indexOf('autoIgnored') === -1,
+       '解析出的课程对象上已无 autoIgnored 字段');
+
+    // 建一个学生，走真实的手动忽略入口
+    g('state.students = [{ sid:"2025210001", name:"张三", status:"ready",'
+      + ' courses: parseCourses(state._igRaw, "2025210001"), rawCourses: state._igRaw }];');
+    g('state.currentCourseModalSid = "2025210001";');
+    const igId0 = g('state.students[0].courses[0].courseId');
+    const igId1 = g('state.students[0].courses[1].courseId');   // 高数：周三第 3-4 节
+
+    // 未忽略时，高数与早班（冲突节次 3,4）冲突
+    eq(g('hasConflict(state.students[0].courses, 3, [3,4], "odd")'), true,
+       '未忽略时「高数」与早班冲突');
+
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId1)})`);
+    eq(g('JSON.stringify([...state.ignoredCourses["2025210001"]])'), JSON.stringify([igId1]),
+       '手动点击后课程 ID 进入忽略集合');
+    eq(g('state.students[0].courses[1].ignored'), true, '手动忽略后该课程 ignored=true');
+    eq(g('hasConflict(state.students[0].courses, 3, [3,4], "odd")'), false,
+       '手动忽略后该时段不再算冲突');
+
+    // 再点一次 = 取消忽略
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId1)})`);
+    eq(g('state.students[0].courses[1].ignored'), false, '再点一次取消忽略');
+    eq(g('JSON.stringify([...state.ignoredCourses["2025210001"]])'), '[]', '取消后集合为空');
+
+    // ── 关键回归：刷新课表后手动忽略必须保留（原先会被 clear() 抹掉）──
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId0)});`);
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId1)});`);
+    eq(g('JSON.stringify(parseCourses(state._igRaw, "2025210001").map(c => c.ignored))'),
+       '[true,true,false]',
+       '重新解析课表（等同刷新课表）后，两门手动忽略的课仍然被忽略');
+
+    // 上面那条只覆盖了 parseCourses。这里再走一遍**真实的刷新课表路径**
+    // （refreshSingleCourse → fetchStudentSchedule），把「刷新会清空忽略」这个
+    // 原始 bug 真正钉死 —— 注入 clear() 时这条必须变红。
+    let refreshResult = null;
+    sandbox.fetch = () => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sid: '2025210001', name: '张三', nowWeek: 8, courses: igRaw,
+      }),
+    });
+    refreshResult = g(`(async () => {
+      await refreshSingleCourse();
+      return state.students[0].courses.map(c => c.ignored);
+    })()`);
+    return Promise.resolve(refreshResult).then(refreshedIgnored => {
+      eq(JSON.stringify(refreshedIgnored), '[true,true,false]',
+         '走真实 refreshSingleCourse() 刷新后，两门手动忽略的课依然被忽略（不清空）');
+      eq(JSON.stringify([...g('state.ignoredCourses["2025210001"]')]),
+         JSON.stringify([igId0, igId1]),
+         '刷新后 ignoredCourses 集合本身也没有被清空');
+      ok(String(el('courseModalTitle').textContent).includes('张三'),
+         'refreshSingleCourse 正常更新了课表弹窗标题（确认这条路径真的跑通了）');
+
+      // ── 清除忽略：一次取消该同学的全部手动忽略 ──
+      g('clearIgnoredCourses()');
+      eq(g('JSON.stringify([...state.ignoredCourses["2025210001"]])'), '[]',
+         '清除忽略后该同学的忽略集合为空');
+      eq(g('JSON.stringify(state.students[0].courses.map(c => c.ignored))'), '[false,false,false]',
+         '清除忽略后所有课程的 ignored 归 false');
+
+      // ── 导入往返：文件里的 ignoredCourses 恢复后由 parseCourses 直接套用 ──
+      g(`(function(){
+        const file = { students: [{ sid:'2025210001', name:'张三', rawCourses: state._igRaw,
+                                    ignoredCourses: [${JSON.stringify(igId1)}] }] };
+        file.students.forEach(s => {
+          if (s.ignoredCourses && s.ignoredCourses.length > 0) {
+            state.ignoredCourses[s.sid] = new Set(s.ignoredCourses);
+          }
+        });
+        state.students = file.students.map(s => {
+          const st = { sid: s.sid, name: s.name, status: 'pending', courses: null, rawCourses: null };
+          if (s.rawCourses && s.rawCourses.length > 0) {
+            st.rawCourses = s.rawCourses;
+            st.courses = parseCourses(s.rawCourses, s.sid);
+            st.status = 'ready';
+          }
+          return st;
+        });
+      })()`);
+      eq(g('JSON.stringify(state.students[0].courses.map(c => c.ignored))'), '[false,true,false]',
+         '导入文件里的手动忽略被 parseCourses 套用（不再「补算自动忽略」）');
+
+      // ── 导出：ignoredCourses 以「手动标记集合」为准（§4.18）──
+      // 直接调页面真实的 exportData()，从它交给 createObjectURL 的 Blob 里读回 JSON，
+      // 而不是在测试里复刻一遍导出逻辑（复刻等于只测测试自己）。
+      let capturedBlob = null;
+      const origCreate = sandbox.URL.createObjectURL;
+      sandbox.URL.createObjectURL = (b) => { capturedBlob = b; return 'blob:x'; };
+
+      // 场景 A：集合里有一门**当前课表里不存在**的陈旧课程 ID —— 也必须被带出去，
+      // 否则用户重新抓课表后，忽略记录会在导出时被悄悄丢掉。
+      g(`state.ignoredCourses['2025210001'] = new Set([${JSON.stringify(igId1)}, 'STALE_id_x']);`);
+      g('exportData()');
+      const exportedA = JSON.parse(capturedBlob.parts[0]);
+      ok(exportedA.students[0].ignoredCourses.includes('STALE_id_x'),
+         '导出保留课表里已不存在的陈旧忽略 ID（改以手动集合为准）',
+         exportedA.students[0].ignoredCourses);
+      ok(exportedA.students[0].ignoredCourses.includes(igId1),
+         '导出包含当前有效的手动忽略 ID');
+
+      // 场景 B：集合为空、但课程上还留着 ignored=true（手工构造的旧数据）→ 仍能带出
+      g('state.ignoredCourses = {};');
+      g('state.students[0].courses[1].ignored = true;');
+      g('exportData()');
+      const exportedB = JSON.parse(capturedBlob.parts[0]);
+      eq(exportedB.students[0].ignoredCourses, [igId1], '集合为空时回退到按 c.ignored 扫描课表');
+
+      // 场景 C：两处都没有 → 导出空数组
+      g('state.students[0].courses[1].ignored = false;');
+      g('exportData()');
+      eq(JSON.parse(capturedBlob.parts[0]).students[0].ignoredCourses, [], '无忽略时导出空数组');
+
+      sandbox.URL.createObjectURL = origCreate;
+
+      // 不持久化（§7.3 的口径不受影响）
+      g('saveIgnoredCourses()');
+      eq(JSON.stringify(g('localStorage._dump()')), '{}', '忽略课程仍然不写入 localStorage');
+
+      summary();
+    });
   });
 }).catch(e => {
   console.error('\n集成测试异常：', e);

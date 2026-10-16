@@ -8,7 +8,7 @@ const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
   periods: Array.from({ length: period }, (_, i) => begin + i), weeks,
   oddWeeks: weeks.filter(w => w % 2 === 1), evenWeeks: weeks.filter(w => w % 2 === 0),
   hasOdd: weeks.some(w => w % 2 === 1), hasEven: weeks.some(w => w % 2 === 0),
-  isFullDay: period >= 8, ignored: !!ignored, autoIgnored: false,
+  isFullDay: period >= 8, ignored: !!ignored,
 });
 
 function setupStudents(n) {
@@ -900,6 +900,45 @@ ok(g('templateWarnings()').some(w => w.includes('双周没有任何生效班次'
 g('initAssignments()');
 eq(g('Object.keys(state.assignments.even)').length, 0, '双周不生成任何槽位');
 eq(g('Object.keys(state.assignments.odd)').length, 7, '单周 7 天各 1 个槽位');
+
+// ── L28. 课程忽略只有手动一种来源：界面接线（见 AGENT.md §4.18） ──
+// 用户要求「删除课程自动忽略功能，仅允许手动忽略」+「删除课表页右下角的重新排班按钮」。
+// §51 已在集成侧锁住模型/行为，这里只锁界面接线与文案。
+section('L28. 课程忽略的界面接线（手动唯一来源 + 无「重新排班」按钮）');
+
+{
+  const html = rawHtml();
+  // 取课表弹窗那一段（#courseModal → #confirmModal），并剥掉注释再判「重新排班」
+  const modalStart = html.indexOf('id="courseModal"');
+  const modalEnd = html.indexOf('id="confirmModal"');
+  ok(modalStart > 0 && modalEnd > modalStart, '能定位课表弹窗片段（DOM 结构未变）');
+  const modal = html.slice(modalStart, modalEnd).replace(/<!--[\s\S]*?-->/g, '');
+
+  ok(!modal.includes('runSchedule'), '课表弹窗内不再有任何 runSchedule() 入口（重新排班按钮已删除）');
+  ok(!modal.includes('重新排班'), '课表弹窗里连「重新排班」字样的按钮也没有了');
+  ok(modal.includes('clearIgnoredCourses()'), '「清除忽略」按钮接 clearIgnoredCourses()');
+  ok(!modal.includes('resetIgnoredCourses'), '不再引用已改名的 resetIgnoredCourses');
+  ok(modal.includes('只有手动') || modal.includes('手动点击决定'),
+     '弹窗内的说明文案写明了「忽略只由手动决定」');
+
+  // 左侧「开始排班」是唯一排班入口，必须还在
+  ok(html.includes('id="btnSchedule"') && /onclick="runSchedule\(\)"/.test(html),
+     '左侧「开始排班」按钮仍是排班入口（删掉的是弹窗里那个，不是这个）');
+
+  // 使用指南已同步（§4.14 要求面向用户的文档一起改）
+  // 注意：不能简单断言「不含『自动忽略』」——新文案里有一句「没有自动忽略」的否定说法。
+  // 要拦的是**旧口径**：声称课程会被自动忽略。
+  const guideStart = html.indexOf('id="guideContent"');
+  const guide = html.slice(guideStart, html.indexOf('id="aboutModal"'));
+  ok(!/会被自动忽略/.test(guide), '使用指南不再声称课程「会被自动忽略」');
+  ok(!/自动识别/.test(guide), '使用指南不再提「自动识别关键词」');
+  ok(!/实训/.test(guide), '使用指南不再举「实训」等自动忽略关键词');
+  ok(guide.includes('手动点击'), '使用指南说明了课程忽略需手动点击（唯一来源）');
+
+  // 弹窗底部应当只剩「关闭」
+  const footer = modal.slice(modal.indexOf('modal-footer'));
+  eq((footer.match(/<button/g) || []).length, 1, '课表弹窗底部只剩一个按钮（关闭）');
+}
 
 summary();
 }).catch(e => {

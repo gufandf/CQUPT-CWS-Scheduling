@@ -99,12 +99,12 @@ API 端点：
 
 | 函数 / 常量 | 作用 |
 | --- | --- |
-| `CONFIG` | 节次时间表、`maxPeriods=12`、忽略课程关键词 |
+| `CONFIG` | 节次时间表、`maxPeriods=12`（**已无「忽略课程关键词」**：课程忽略只有手动一种来源，见 §4.18） |
 | `LAYOUT_MODES` / `weekdayWeekendLayout()` | 两种分组模式的元信息、预设「工作日/周末」的分组定义 |
 | `getLayout()` / `getGroupForDay()` / `getGroupKeyByDay()` / `groupMeta()` | **分组访问器（唯一入口）**，见 §4.6 |
 | `getShiftsForDay()` / `getShiftById()` / `ungroupedDays()` | 按天取班次 / 按 id 取班次 / 未归组的天 |
 | `groupDaysText()` / `groupDaysBadge()` | 分组天数文案（连续天压成「周一至周五」；与分组名重复时徽标留空） |
-| `state` | 全局状态（学生、模板、单双周排班、忽略课程……） |
+| `state` | 全局状态（学生、模板、单双周排班、手动忽略课程……） |
 | `deriveConflictPeriods()` | 由班次起止时间推导冲突节次 |
 | `makeDefaultTemplate()` | 内置默认模板（与原硬编码配置逐项一致） |
 | `normalizeLayout()` / `normalizeTemplate()` | 分组定义规范化 / 模板规范化（补字段、丢非法项、兼容旧格式） |
@@ -815,6 +815,56 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 隐藏兼容按钮仍直接导出、`closeModal()` 可安全调用（原先会抛错）、以及不写入 localStorage。
 （已用注入 bug 确认：让 `joinNames` 忽略分隔符会红 4 条，让菜单直接导出会红 1 条。）
 
+### 4.18 课程忽略**只有手动一种来源**（自动忽略已按用户要求删除）
+
+用户要求：**「删除课程自动忽略功能，仅允许手动忽略」**。因此：
+
+- `CONFIG.ignoreCourseKeywords`（`['实训','实习','实践','课程设计','毕业设计']`）**已整项删除**，
+  以及配套的「仅在 18 周及以后的课程自动忽略」规则也一并删除。
+  **不要再加回任何按课程名 / 周次 / 类型的自动忽略规则**，也不要新增类似的 `CONFIG` 字段。
+- `state.ignoredCourses`（`{ sid: Set<courseId> }`）是**唯一**的忽略来源，只有用户在课表弹窗里
+  点课程块（`toggleCourseIgnore()`）才会写入。**`course.ignored` 恒等于 `ignoredSet.has(courseId)`**，
+  绝不能再写成 `ignoredSet.has(id) ? !autoIgnored : autoIgnored` 这类与自动规则联动的表达式。
+- `parseCourses(data, sid)` 的 `skipAutoIgnore` 参数**已删除**（没有自动忽略可跳过）。
+  调用点只剩三个：`fetchAllSchedules` / `showStudentCourse` / `refreshSingleCourse`，外加导入路径。
+- `course.autoIgnored` 字段**已彻底删除**（不再是「留着没人读」）。`saveIgnoredCourses()`（空实现）
+  仍保留调用点（§7.3 的策略：`persist*/load*` 退化但不改调用点）。测试夹具里也**不要**再补
+  `autoIgnored: false`——`.selftest/` 的两个 `mkCourse` 已同步删掉该字段。
+
+**刷新课表绝不能清空手动忽略**（这是本次修复的核心，别再改回去）：原先三处刷新路径都有
+
+```js
+if (state.ignoredCourses[student.sid]) state.ignoredCourses[student.sid].clear();  // ❌ 已删除
+```
+
+配合「以本次自动忽略为准」重新赋值 `c.ignored`。删掉自动忽略后这段逻辑只剩破坏性：
+用户每点一次「刷新课表」/「刷新」，辛苦点出来的忽略就**全部白费**。
+现在三处（`fetchAllSchedules`、`showStudentCourse`、`refreshSingleCourse`）都**保留** `ignoredSet`，
+由 `parseCourses()` 按同一套 `courseId` 重新套用 —— `courseId` 由
+`class_id|course_num + 星期 + 起始节 + 起始周` 拼成，刷新前后稳定，因此忽略能正确延续。
+
+配套的两处界面变化：
+
+1. **课表弹窗右下角的「重新排班」按钮已删除**（用户要求）。忽略调整后不再从弹窗里直接重排，
+   排班统一由左侧「开始排班」按钮触发；弹窗底部只剩「关闭」。
+   忽略后仍照旧 `refreshView()` + `highlightAllConflicts()` 高亮冲突班次。
+2. **「重置忽略」改名为「清除忽略」**（`resetIgnoredCourses()` → `clearIgnoredCourses()`）：
+   语义从「清除手动标记后重新套用自动规则」变成纯粹的**清空该同学全部手动忽略**，
+   并把 `course.ignored` 一律置 `false`。函数名一并改了，别保留旧名做别名。
+
+`exportData()` 的 `ignoredCourses` 字段改以 `state.ignoredCourses` 这份手动集合为准
+（比「遍历当前课表筛 `c.ignored`」更稳：课表里暂时没有的课程也能被带出去）。
+`handleImportFile()` 里「补算自动忽略」那一整段**已删除**，文件里的 `ignoredCourses`
+在恢复 `ignoredSet` 后由 `parseCourses()` 自动套用。
+
+测试见 `.selftest/test-integration.js` §51（手动忽略语义）与 `.selftest/test-layout.js` §L28
+（界面接线）：`CONFIG` 无自动忽略字段、源码中不再出现 `autoIgnored` 赋值 / `ignoreCourseKeywords`、
+`parseCourses` 不再自动标记、**刷新课表后手动忽略仍在**、清除忽略的行为与文案、
+弹窗底部无「重新排班」按钮、以及导入导出往返。
+（已用注入 bug 确认：加回 `ignoreCourseKeywords` 会红 2 条；在 `refreshSingleCourse` 里
+恢复 `clear()` 会红 2 条；把「重新排班」按钮加回去会红 1 条 + §L28 红 3 条；
+让 `exportData()` 退回旧口径会红 2 条。）
+
 ---
 
 ## 5. 测试
@@ -833,11 +883,13 @@ test-integration.js     排班、剪枝、渲染、导出、导入往返、每�
                                 导出设置对话框与名字分隔符（§50，见 §4.17）、
                                 学生锁（§47，锁「人」——自动排班不添加也不修改，见 §4.9.1）、
                                 「编辑」菜单（§48，见 §4.12）、
-                                导入模板文件立即生效并自动开编辑器（§49，见 §4.12）
+                                导入模板文件立即生效并自动开编辑器（§49，见 §4.12）、
+                                手动忽略课程（§51，无自动忽略 + 刷新不清空忽略，见 §4.18）
 test-layout.js          排班日分组（预设/自定义、模式往返、动态渲染与导出、未排班时的表格、
                                 分组只排单周/双周）、学号列表入场动画（只播一次 + 逐条错峰 + 就地更新，
                                 §L25b，见 §4.13）、学号列表搜索（§L25c，纯视图过滤，见 §4.15）、
-                                悬浮体验（§L25d：无上移 / 锁热区 24×24 / 悬浮班次滚动定位，见 §4.16）
+                                悬浮体验（§L25d：无上移 / 锁热区 24×24 / 悬浮班次滚动定位，见 §4.16）、
+                                手动忽略课程的界面接线（§L28，见 §4.18）
 run-all.sh              入口
 ```
 
