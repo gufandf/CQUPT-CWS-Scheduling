@@ -11,6 +11,10 @@ import re
 import errno
 import hashlib
 import random
+import socket
+import threading
+import time
+import webbrowser
 import requests
 import urllib3
 
@@ -562,6 +566,25 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
         self.send_json_response(status, {'error': message, 'courses': []})
 
 
+def open_browser_when_ready(url, timeout=10.0):
+    """等端口真正可连接后再打开默认浏览器。
+
+    固定 sleep 不可靠（机器慢时页面会白屏），所以轮询本机端口，
+    连上即打开；超时则放弃，不影响服务本身。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(('127.0.0.1', PORT), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.1)
+    try:
+        webbrowser.open(url)
+    except Exception as e:
+        print(f'打开浏览器失败（请手动访问 {url}）: {e}')
+
+
 def main():
     try:
         server = http.server.ThreadingHTTPServer(('0.0.0.0', PORT), ProxyHandler)
@@ -574,7 +597,16 @@ def main():
             print(f'启动失败: {e}')
             sys.exit(1)
 
-    print(f'Server started: http://localhost:{PORT}')
+    url = f'http://localhost:{PORT}'
+    print(f'Server started: {url}')
+
+    # 后台线程里等端口就绪再开浏览器，避免阻塞 serve_forever。
+    # 设环境变量 NO_BROWSER=1 可跳过自动打开（便于脚本 / 自测里跑）。
+    if not os.environ.get('NO_BROWSER'):
+        threading.Thread(
+            target=open_browser_when_ready, args=(url,), daemon=True
+        ).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
