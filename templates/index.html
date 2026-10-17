@@ -212,6 +212,20 @@ body {
   z-index: 101;
 }
 .menu.open .menu-panel { display: block; }
+/* 「编辑」菜单里放了开关 + 数值框，比纯文字项宽一些 */
+.menu-panel-wide { min-width: 250px; }
+/*
+ * 「编辑」菜单里的开关行（复用 .opt-row 的开关外观）。
+ * 外层已经是卡片底色的下拉面板，所以去掉 .opt-row 自带的边框与阴影，
+ * 只在 hover 时给一层淡淡的底色，观感与上面的 .menu-item 一致。
+ */
+.menu-panel .menu-opt {
+  background: transparent; border-color: transparent; box-shadow: none;
+  padding: 7px 12px; border-radius: var(--radius-sm);
+  align-items: center;
+}
+.menu-panel .menu-opt:hover { background: var(--primary-light); border-color: transparent; }
+.menu-panel .menu-opt input[type="number"] { margin-left: auto; }
 .menu-item {
   display: flex; align-items: center; gap: 8px; width: 100%;
   padding: 8px 12px; border: none; border-radius: var(--radius-sm);
@@ -380,6 +394,37 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 
 /* ── Student List ───────────────────────── */
+/* 搜索框：只在左侧列表上方，按姓名 / 学号过滤显示（纯视图过滤，不影响排班与导出，见 §4.15） */
+.student-search {
+  position: relative; display: flex; align-items: center; flex-shrink: 0;
+}
+.student-search .search-icon {
+  position: absolute; left: 9px; font-size: 14px; line-height: 1;
+  color: var(--text-muted); pointer-events: none;
+}
+.search-input {
+  width: 100%; height: 32px; padding: 0 28px 0 26px;
+  font-family: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg);
+  border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  outline: none; transition: border-color var(--transition), box-shadow var(--transition);
+}
+.search-input::placeholder { color: var(--text-muted); }
+.search-input:focus { border-color: var(--primary); box-shadow: var(--ring); }
+.student-search .search-clear {
+  position: absolute; right: 4px; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; border-radius: 4px;
+  color: var(--text-muted); font-size: 15px; line-height: 1; cursor: pointer;
+  transition: all var(--transition);
+}
+.student-search .search-clear:hover { color: var(--danger); background: var(--danger-light); }
+/* 搜索无结果时的占位行（渲染在 #studentList 内部） */
+.student-empty {
+  padding: 20px 12px; text-align: center;
+  color: var(--text-muted); font-size: 12px; line-height: 1.7;
+}
+
 .student-list {
   flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 60px;
   border: 1.5px solid var(--border); border-radius: var(--radius-sm);
@@ -447,6 +492,24 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   border-radius: 4px; transition: all var(--transition);
 }
 .student-item .remove-btn:hover { color: var(--danger); background: var(--danger-light); }
+
+/* ── 学号列表上的锁定（锁「人」，见 §4.9.1） ──────────────
+   与值班表里的位置锁（§4.9）是两回事：那个锁的是「该同学 + 该班次」这个位置，
+   这个锁的是「这个人」——自动排班既不添加也不修改他的任何班次。
+   配色沿用位置锁的琥珀色，让用户一眼认出「这块被锁住了」。 */
+.student-item .lock-btn {
+  cursor: pointer; width: 24px; height: 24px; font-size: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: var(--text-muted);
+  transition: all var(--transition);
+}
+.student-item .lock-btn:hover { color: var(--warning); background: var(--warning-light); }
+.student-item.locked { background: var(--warning-light); box-shadow: inset 3px 0 0 0 var(--warning); }
+.student-item.locked:hover { background: var(--warning-light); box-shadow: inset 3px 0 0 0 var(--warning); }
+.student-item.locked .lock-btn { color: var(--warning); }
+.student-item.locked .lock-btn:hover { background: rgba(217,119,6,.16); }
+/* 锁图标比 × 稍大一点才看得清（内联 SVG 的 width/height 由 JS 写入） */
+.student-item .lock-btn svg { width: 13px; height: 13px; }
 
 .status {
   font-size: 11px; font-weight: 600; padding: 2px 8px;
@@ -773,9 +836,13 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   background: var(--primary-grad); color: #fff;
   box-shadow: 0 1px 3px rgba(37,99,235,.35);
 }
-.student-tag:hover { 
-  transform: translateY(-2px) scale(1.03); 
-  box-shadow: 0 6px 16px rgba(37,99,235,.42);
+/* 悬浮反馈**不做位移 / 缩放**（用户要求删除上移动画）：
+   原先这里是 `transform: translateY(-2px) scale(1.03)`，鼠标划过一排标签时整排都在动，
+   观感很跳（与 §4.13 第 2 条「.shift-cell:hover 不许 scale」是同一类问题）。
+   现在只保留阴影 / 亮度这类「不改变几何」的轻微反馈。
+   注意：拖拽相关动画（.dragging / dragPulse / .drop-available）是**落点反馈**，要保留。 */
+.student-tag:hover {
+  box-shadow: 0 4px 12px rgba(37,99,235,.42);
   filter: brightness(1.05);
 }
 .student-tag:active { 
@@ -799,21 +866,30 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   padding-left: 3px; line-height: 1;
 }
 .student-tag .remove-btn:hover { opacity: 1; }
-/* 锁定按钮：锁住「该同学 + 该班次」这个位置，重新排班不会改变它 */
+/* 锁定按钮：锁住「该同学 + 该班次」这个位置，重新排班不会改变它。
+   命中区域加大（用户要求「略微加大锁定的判定范围」）：图标本身只有 10px，
+   原先的可点区就是那 10px，很难点中。现在用 24×24 的触区 + 负外边距把热区撑开，
+   **不撑大**标签本身的布局（负 margin 抵消掉 padding 带来的尺寸增长）。 */
 .student-tag .lock-btn {
   cursor: pointer; font-size: 10px; line-height: 1;
-  margin-right: 4px; opacity: .7;
-  transition: opacity var(--transition);
-  display: inline-flex; align-items: center;
+  /* 负纵向 margin 抵消 24px 盒子带来的高度增长：实测标签会从 26px 涨到 32px，
+     把整行撑高、观感变化明显。加了 -7px 之后热区仍是 24×24，标签高度回到 26px。 */
+  margin: -7px 2px -7px -4px; opacity: .7;
+  transition: opacity var(--transition), background var(--transition);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; min-width: 24px;
+  border-radius: 50%;
 }
-.student-tag .lock-btn:hover { opacity: 1; }
+.student-tag .lock-btn:hover { opacity: 1; background: rgba(255,255,255,.22); }
 .student-tag.locked {
   background: var(--warning-grad);
   box-shadow: 0 1px 3px rgba(217,119,6,.45);
   cursor: default;
 }
-.student-tag.locked:hover { transform: none; box-shadow: 0 1px 3px rgba(217,119,6,.45); }
+/* 悬浮反馈已不再有位移，这里只需保持锁定配色（原先是用来抵消 translateY 的） */
+.student-tag.locked:hover { box-shadow: 0 1px 3px rgba(217,119,6,.45); filter: none; }
 .student-tag.locked .lock-btn { opacity: 1; }
+.student-tag.locked .lock-btn:hover { background: rgba(255,255,255,.28); }
 
 /* ── Student highlight on hover ────────── */
 /* 这里不能写死 border-radius：会把 .student-tag 的胶囊圆角（999px）覆盖成 4px，
@@ -952,6 +1028,50 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   font-size: 12px; line-height: 1.5; white-space: pre-wrap;
   background: var(--cell-wd); padding: 16px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); max-height: 400px; overflow: auto;
+}
+
+/* ── Export Settings Dialog（#exportModal，见 §4.17） ── */
+.export-dialog-desc {
+  font-size: 12.5px; line-height: 1.7; color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+.export-field { margin-bottom: 16px; }
+.export-field-label {
+  font-size: 12px; font-weight: 700; color: var(--text);
+  margin-bottom: 7px;
+}
+.export-field-body { display: flex; flex-direction: column; gap: 8px; }
+.export-static {
+  font-size: 12px; color: var(--text-secondary);
+  padding: 7px 11px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+/* 单选行：整行都是热区，选中时描边高亮 */
+.export-radio {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 11px; cursor: pointer; user-select: none;
+  background: var(--card); border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition), background var(--transition);
+}
+.export-radio:hover { border-color: var(--text-muted); }
+.export-radio input[type="radio"] {
+  margin: 2px 0 0; flex-shrink: 0; accent-color: var(--primary); cursor: pointer;
+}
+.export-radio > span {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.export-radio small {
+  font-size: 11px; font-weight: 400; color: var(--text-muted); line-height: 1.55;
+}
+/* 选中态：给整行描边上色（用 :has，现代浏览器都支持；不支持的只是少了这层高亮，不影响功能） */
+.export-radio:has(input[type="radio"]:checked) {
+  border-color: var(--primary); background: var(--primary-light);
+}
+.export-dialog-hint {
+  font-size: 11.5px; line-height: 1.7; color: var(--text-muted);
+  padding-top: 4px; border-top: 1px dashed var(--border); margin-top: 4px;
 }
 
 /* ── Course Modal ───────────────────────── */
@@ -1353,17 +1473,54 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
               onclick="menuRun(function(){ document.getElementById('tplFileInput').click(); })">导入模板…</button>
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" id="menuExportDuty"
-              onclick="menuRun(exportDutySchedule)" disabled>导出值班表</button>
+              onclick="menuRun(function(){ openExportDialog('duty'); })" disabled>导出值班表…</button>
       <button class="menu-item" role="menuitem" id="menuExportFree"
-              onclick="menuRun(exportFreeSchedule)" disabled>导出空课表</button>
+              onclick="menuRun(function(){ openExportDialog('free'); })" disabled>导出空课表…</button>
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick="menuRun(exportData)">导出数据</button>
       <button class="menu-item" role="menuitem" onclick="menuRun(exportTemplateFile)">导出值班模板</button>
       <div class="menu-sep"></div>
-      <button class="menu-item" role="menuitem" onclick="menuRun(openTemplateEditor)">编辑值班模板…</button>
-      <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick="menuRun(resetSchedule)">重置排班…</button>
       <button class="menu-item" role="menuitem" onclick="menuRun(clearAll)">清空学号与排班…</button>
+    </div>
+  </div>
+
+  <!-- ── 编辑 ── -->
+  <!-- 值班模板编辑与两个排班偏好开关都收在这里（用户要求「放到编辑栏下的二级菜单」）。
+       注意：面板里的开关**不**走 menuRun —— menuRun 会先收起菜单，而开关又不打开弹窗，
+       用户就看不到勾选状态的变化。开关项直接调 set* 函数，菜单保持展开；
+       点菜单外 / 点另一个一级菜单仍照常收起（见文档末尾的 document click 处理）。 -->
+  <div class="menu" id="menuEdit">
+    <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+            onclick="toggleMenu('menuEdit', event)">编辑<span class="menu-caret">▾</span></button>
+    <div class="menu-panel menu-panel-wide" role="menu">
+      <button class="menu-item" role="menuitem" onclick="menuRun(openTemplateEditor)">编辑值班模板…</button>
+      <div class="menu-sep"></div>
+      <!-- 「限制每人每周班次」：开关 + 数值框（勾选后才生效，未勾选时数值框置灰） -->
+      <label class="opt-row menu-opt" for="maxShiftsToggle"
+             title="勾选：每人每周的班次数不超过右侧设定值（单周、双周各自单独计数）；不勾选：不限每人班次">
+        <input type="checkbox" id="maxShiftsToggle" onchange="setMaxShiftsEnabled(this.checked)">
+        <span class="opt-switch" aria-hidden="true"></span>
+        <span class="opt-text">
+          <strong>限制每人每周班次</strong>
+          <small id="maxShiftsHint">不勾选：不限每人班次</small>
+        </span>
+        <input type="number" id="maxShiftsInput" min="1" max="99" step="1" value="3"
+               title="每人每周最多班次（1~99）"
+               onclick="event.stopPropagation()"
+               oninput="setMaxShiftsPerWeek(this.value)"
+               onchange="setMaxShiftsPerWeek(this.value, {normalize:true})">
+      </label>
+      <!-- 「连续排班」：勾选 = 尽量连班，不勾选 = 尽量分散 -->
+      <label class="opt-row menu-opt" for="continuousToggle"
+             title="勾选：尽量把同一人的班次连在一起（同一天连班、相邻几天都来）；不勾选：尽量分散到不同时段与日期">
+        <input type="checkbox" id="continuousToggle" onchange="setContinuousScheduling(this.checked)">
+        <span class="opt-switch" aria-hidden="true"></span>
+        <span class="opt-text">
+          <strong>连续排班</strong>
+          <small id="continuousHint">未勾选：尽量把同一人的班次分散开</small>
+        </span>
+      </label>
     </div>
   </div>
 
@@ -1409,6 +1566,18 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   <div class="left-panel">
     <div class="panel-body">
       <div class="section-title">学号列表</div>
+      <!-- 搜索框放在列表**外面**：renderStudentList() 每次都整段重写 #studentList.innerHTML，
+           输入框放进列表里会被反复重建、丢掉输入焦点（与 §4.13 第 4 条同类坑）。 -->
+      <div class="student-search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input type="text" id="studentSearch" class="search-input"
+               placeholder="搜索姓名或学号…"
+               autocomplete="off" spellcheck="false"
+               oninput="setStudentQuery(this.value)"
+               onkeydown="onStudentSearchKeydown(event)">
+        <button type="button" class="search-clear" id="studentSearchClear"
+                onclick="clearStudentQuery()" title="清除搜索" hidden>×</button>
+      </div>
       <div id="studentList" class="student-list"></div>
       <div id="studentCount" class="student-count">共 0 人</div>
 
@@ -1416,31 +1585,8 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         <div class="fill" id="progressFill"></div>
       </div>
 
-      <!-- 「每人每周最多班次」改成开关（与「连续排班」同款），勾选后才套用上限 -->
-      <label class="opt-row" for="maxShiftsToggle"
-             title="勾选：每人每周的班次数不超过右侧设定值（单周、双周各自单独计数）；不勾选：不限每人班次">
-        <input type="checkbox" id="maxShiftsToggle" onchange="setMaxShiftsEnabled(this.checked)">
-        <span class="opt-switch" aria-hidden="true"></span>
-        <span class="opt-text">
-          <strong>限制每人每周班次</strong>
-          <small id="maxShiftsHint">不勾选：不限每人班次</small>
-        </span>
-        <input type="number" id="maxShiftsInput" min="1" max="99" step="1" value="3"
-               title="每人每周最多班次（1~99）"
-               onclick="event.stopPropagation()"
-               oninput="setMaxShiftsPerWeek(this.value)"
-               onchange="setMaxShiftsPerWeek(this.value, {normalize:true})">
-      </label>
-
-      <label class="opt-row" for="continuousToggle"
-             title="勾选：尽量把同一人的班次连在一起（同一天连班、相邻几天都来）；不勾选：尽量分散到不同时段与日期">
-        <input type="checkbox" id="continuousToggle" onchange="setContinuousScheduling(this.checked)">
-        <span class="opt-switch" aria-hidden="true"></span>
-        <span class="opt-text">
-          <strong>连续排班</strong>
-          <small id="continuousHint">未勾选：尽量把同一人的班次分散开</small>
-        </span>
-      </label>
+      <!-- 「限制每人每周班次」与「连续排班」两个开关已搬到顶部「编辑」菜单
+           （用户要求；见 §4.12）。左侧面板不再有这两个 .opt-row。 -->
 
       <div class="btn-group" style="flex-direction:column;gap:6px;margin-top:auto;">
         <button class="btn btn-success" id="btnSchedule" onclick="runSchedule()" disabled style="width:100%;justify-content:center;padding:12px;">
@@ -1451,6 +1597,7 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         </button>
         <!-- 导入 / 导出类入口都搬到了顶部「文件」菜单。下面这些隐藏按钮只为保留既有 id，
              让老脚本与自测仍能触发同一动作，别删、也别显示出来。 -->
+        <!-- 隐藏兼容按钮：老脚本 / 自测仍按「调用即导出」触发（不经过设置对话框） -->
         <button type="button" id="btnExportDuty" style="display:none" onclick="exportDutySchedule()" disabled>导出值班表</button>
         <button type="button" id="btnExportFree" style="display:none" onclick="exportFreeSchedule()" disabled>导出空课表</button>
         <button type="button" id="btnMenuImportStudents" style="display:none" onclick="loadStudents()">导入学号</button>
@@ -1485,20 +1632,48 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
   </div>
 </div>
 
-<!-- ===== 导出弹窗 ===== -->
+<!-- ===== 导出设置弹窗（「文件」菜单 → 导出值班表 / 导出空课表） ===== -->
+<!-- 保留 id="exportModal"：它必须仍然排在 #confirmModal **之前**（§6.7 的层叠前提），
+     改名/换位置会破坏 §42 与 §45 的静态断言。 -->
 <div class="modal-overlay" id="exportModal">
-  <div class="modal">
+  <div class="modal" style="max-width:460px;">
     <div class="modal-header">
-      <h3 id="modalTitle">导出预览</h3>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <h3 id="modalTitle">导出设置</h3>
+      <button class="close-btn" onclick="closeExportDialog()">×</button>
     </div>
     <div class="modal-body">
-      <pre id="modalContent"></pre>
+      <p id="exportDialogDesc" class="export-dialog-desc"></p>
+
+      <!-- 导出格式（目前只有 Excel，留作以后扩展的占位） -->
+      <div class="export-field">
+        <div class="export-field-label">导出格式</div>
+        <div class="export-field-body">
+          <span class="export-static">Excel 工作簿（.xlsx）</span>
+        </div>
+      </div>
+
+      <!-- 名字分隔符：同一个班次里有多个同学时，名字之间用什么隔开 -->
+      <div class="export-field">
+        <div class="export-field-label">名字分隔符</div>
+        <div class="export-field-body">
+          <label class="export-radio" for="exportSepDun">
+            <input type="radio" name="exportSep" id="exportSepDun" value="、"
+                   onchange="setExportSeparator('、')">
+            <span>顿号「、」<small>张三、李四（默认，一行显示）</small></span>
+          </label>
+          <label class="export-radio" for="exportSepNewline">
+            <input type="radio" name="exportSep" id="exportSepNewline" value="newline"
+                   onchange="setExportSeparator('newline')">
+            <span>换行符<small>张三 ↵ 李四（写入单元格内的换行；Excel 里需该格开启「自动换行」才显示为多行）</small></span>
+          </label>
+        </div>
+      </div>
+
+      <p class="export-dialog-hint" id="exportDialogHint"></p>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal()">关闭</button>
-      <button class="btn btn-primary" onclick="copyModalContent()">复制</button>
-      <button class="btn btn-success" onclick="downloadModalContent()">下载</button>
+      <button class="btn btn-outline" onclick="closeExportDialog()">取消</button>
+      <button class="btn btn-success" id="exportDialogConfirm" onclick="confirmExportDialog()">导出</button>
     </div>
   </div>
 </div>
@@ -1511,7 +1686,7 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
       <div style="display:flex;align-items:center;gap:12px;">
         <span style="font-size:12px;color:var(--text-secondary);" id="courseModalWeek"></span>
         <button class="btn btn-outline btn-sm" onclick="refreshSingleCourse()" title="重新获取该同学的课表">刷新</button>
-        <button class="btn btn-outline btn-sm" onclick="resetIgnoredCourses()" title="重置该同学的忽略课程">重置忽略</button>
+        <button class="btn btn-outline btn-sm" onclick="clearIgnoredCourses()" title="清除该同学的全部忽略课程">清除忽略</button>
         <button class="close-btn" onclick="closeCourseModal()">×</button>
       </div>
     </div>
@@ -1520,12 +1695,14 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         <div class="course-grid" id="courseGrid"></div>
       </div>
       <div style="margin-top:12px;font-size:11px;color:var(--text-secondary);text-align:center;">
-        点击课程块可<strong>忽略</strong>该课程（排班时不考虑该时段冲突）
+        点击课程块可<strong>忽略</strong>该课程（排班时不考虑该时段冲突）；
+        忽略<strong>只由手动点击决定</strong>，程序不会自动忽略任何课程。
       </div>
     </div>
     <div class="modal-footer">
+      <!-- 右下角原有的「重新排班」按钮已按用户要求删除：忽略课程只是调整冲突口径，
+           排班仍由左侧「开始排班」按钮统一触发，不在这个弹窗里重复一个入口。 -->
       <button class="btn btn-outline" onclick="closeCourseModal()">关闭</button>
-      <button class="btn btn-primary" onclick="closeCourseModal();runSchedule()">重新排班</button>
     </div>
   </div>
 </div>
@@ -1581,34 +1758,56 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
     <div class="modal-body" id="guideContent">
       <div style="line-height:1.8;color:var(--text-secondary);">
         <p><strong>1. 导入学号</strong>：点顶部<b>「文件」菜单 → 导入学号…</b>，在弹出的窗口里粘贴 10 位学号（每行一个）后点「导入」。
-          导入 / 导出数据、导入 / 导出值班模板、编辑值班模板、重置排班、导出值班表 / 空课表，也都在这个「文件」菜单里。</p>
+          导入 / 导出数据、导入 / 导出值班模板、重置排班、导出值班表 / 空课表，都在「文件」菜单里；
+          <b>编辑值班模板</b>与两个排班开关在<b>「编辑」菜单</b>里。</p>
         <p><strong>2. 开始排班</strong>：自动获取课表并智能分配值班，<strong>无论是否限制班次，都会尽量让每人的班次数相近</strong>。
-          <strong>要不要限制每人每周班次数，由左侧「限制每人每周班次」开关决定</strong>：
+          <strong>要不要限制每人每周班次数，由顶部「编辑」菜单 →「限制每人每周班次」开关决定</strong>：
           不勾选＝谁空谁上、不限班次；勾选＝每人每周不超过右侧填写的数值（单周、双周各自单独计数）。
           课表冲突与班次人数上限始终都会遵守。</p>
         <p><strong>3. 查看/调整</strong>：右侧表格<strong>始终显示当前值班模板的时段</strong>（未排班时人数显示为 0/N），
           可<strong>拖拽</strong>学生标签到其他班次调整，也可以直接把左侧的同学拖进格子手动排班。
-          右上角可在<strong>「值班表」</strong>（谁在值班）与<strong>「空课表」</strong>（每个时段谁有空）之间切换，单周 / 双周也在那里切换。</p>
-        <p><strong>4. 连续排班</strong>：左侧的「连续排班」开关决定同一人的班次怎么摆放。
+          右上角可在<strong>「值班表」</strong>（谁在值班）与<strong>「空课表」</strong>（每个时段谁有空）之间切换，单周 / 双周也在那里切换。<br>
+          左侧「学号列表」上方的<strong>搜索框</strong>可按<strong>姓名或学号</strong>快速找人（支持只输一部分，
+          英文姓名不分大小写）；它<strong>只过滤左侧列表的显示</strong>，不会把人从排班、课表或导出结果里去掉，
+          点 × 或按 Esc 即可恢复完整列表。<br>
+          把鼠标移到右边某个班次的同学标签上，左侧列表会<strong>自动滚动到这位同学</strong>（已经看得见就不动），
+          方便人多了以后快速对照；点标签左侧的小锁图标可以锁定该位置，点 × 可把 TA 移出这个班次。</p>
+        <p><strong>4. 连续排班</strong>：顶部<b>「编辑」菜单 →「连续排班」</b>开关决定同一人的班次怎么摆放。
           <strong>勾选</strong>＝尽量把班次连成片（同一天<b>首尾相接</b>的班次尽量给同一个人，相邻几天也尽量连着排）；
           <strong>不勾选</strong>（默认）＝反过来尽量分散，避免连班、也避免连着几天都排同一个人。
           这项只是「尽量」的偏好：算法只做<b>不改变任何人班次数</b>的等价交换，因此在满足它的同时
           不会破坏「尽量让每人班次数相近」这条均衡性。</p>
-        <p><strong>5. 排班锁定</strong>：点学生标签上的<strong>锁图标</strong>可锁住
+        <p><strong>5. 排班锁定</strong>（两种，互为补充）：<br>
+          · <strong>锁位置</strong>：点学生标签上的<strong>锁图标</strong>可锁住
           <strong>「该同学 + 该班次」这个位置</strong>——锁定后无论怎么重新排班都不会改变它。
           锁定的标签显示为琥珀色、不能拖动也不能移除（先解锁再操作）；
-          该同学在<strong>其它</strong>班次仍可被正常安排。锁定会随「导出/导入数据」一起保存。</p>
-        <p><strong>6. 课表管理</strong>：点击学生姓名查看课表，可<strong>忽略</strong>特定课程后重新排班。</p>
-        <p><strong>7. 值班模板</strong>：顶部<b>「文件」菜单 → 编辑值班模板…</b>可自定义每个班次的<strong>值班时间、值班人数、单双周</strong>，
+          该同学在<strong>其它</strong>班次仍可被正常安排。<br>
+          · <strong>锁人</strong>：点左侧学号列表每行的<strong>锁图标</strong>可锁定这位同学，
+          锁定后自动排班对他<strong>既不添加、也不修改</strong>——现有的班次原样冻结，也不会被派到新班次
+          （适合「课表还没更新、先别动他」的情况）；他在右侧表格里的标签仍可手动拖动、移除。
+          左边锁定的同学会显示为琥珀色。<br>
+          两种锁定都会随「导出/导入数据」一起保存。</p>
+        <p><strong>6. 课表管理</strong>：点击学生姓名查看课表，<strong>点击课表里的课程块即可忽略该课程</strong>
+          （排班时不再把该时段当作冲突），再点一次取消。忽略<strong>只有手动这一种来源</strong>——
+          程序不会按课程名或周次自动忽略任何课程；弹窗顶部的「清除忽略」可一次取消该同学的全部忽略。
+          调整完忽略后，点左下角<strong>「开始排班」</strong>重新分配即可。</p>
+        <p><strong>7. 值班模板</strong>：顶部<b>「编辑」菜单 → 编辑值班模板…</b>可自定义每个班次的<strong>值班时间、值班人数、单双周</strong>，
           自由<strong>添加/删除/排序</strong>班次，并单独设置与该时段<strong>冲突的课程节次</strong>。<br>
           <strong>排班日分组</strong>支持两种模式：「工作日 / 周末」为预设两组；「一周 7 天自由组合」可自定义分组数量、
           名称与每组包含的星期（例如周一周二一组、周三到周日一组），每组各自一套班次。
           <strong>允许整个分组只排单周或只排双周</strong>（例如工作日组只排单周），保存不会被拦截，只给提示。<br>
           模板改完点<strong>「保存并应用」</strong>立即生效；如需留存或分享，用顶部「文件」菜单 →
           <strong>导出值班模板…</strong>存成文件，下次用<strong>「导入模板…」</strong>载入。
-          注意从「导入模板…」载入的是草稿，<b>不会自动打开编辑器</b>，请再点「编辑值班模板…」确认后按「保存并应用」。</p>
+          <b>「导入模板…」会立即套用文件里的模板，并自动打开这个编辑器</b>供你确认与微调
+          （若文件里的模板有问题，则不会直接套用，只打开编辑器并标出问题）。
+          确认无误后可以再点「保存并应用」，也可以直接关掉编辑器。</p>
         <p><strong>8. 导出</strong>：支持导出值班表/空课表为 Excel，导出/导入排班数据为 JSON（含值班模板与锁定），
-          全部集中在顶部<b>「文件」菜单</b>。<strong>「导出值班表」得到的 Excel 还附带第三个工作表「人员表」</strong>，
+          全部集中在顶部<b>「文件」菜单</b>。
+          <b>点「导出值班表…」/「导出空课表…」会先弹出一个设置窗口</b>，确认设置后点窗口里的
+          <b>「导出」</b>才会生成文件（点「取消」则不导出）。目前可设<b>名字分隔符</b>：
+          同一个班次有多位同学时，选<b>顿号「、」</b>写成「张三、李四」占一行，或选<b>换行符</b>在单元格内一行一个
+          （Excel 里需对该列开启「自动换行」才会显示成多行）。<br>
+          <strong>「导出值班表」得到的 Excel 还附带第三个工作表「人员表」</strong>，
           把「按班次看人」翻转成「按人看班次」（姓名 / 学号 / 单周班次 / 双周班次 / 合计 + 逐条明细），
           方便每位值班同学快速查看自己在何时有几班；没有排到班的同学也会保留一行并显示 0。
           「导出空课表」不含人员表。</p>
@@ -1621,8 +1820,8 @@ textarea#sidInput::placeholder { color: var(--text-muted); opacity: .9; }
         </p>
         <!-- <hr style="border-color:var(--border);margin:12px 0;"> -->
         <p style="font-size:12px;color:var(--text-muted);">
-          <strong>提示</strong>：含"实训""实习""课程设计"等关键词的课程会被自动忽略。<br>
-          点击课表弹窗中的「刷新」可单独更新某同学的课表。<br>
+          <strong>提示</strong>：课程忽略需在课表弹窗里<strong>手动点击</strong>课程块设置，没有自动忽略。<br>
+          点击课表弹窗中的「刷新」可单独更新某同学的课表（已手动忽略的课程会保留）。<br>
           导出 Excel 依赖 CDN 上的 xlsx 库，<b>完全离线时导出会失效</b>。<br>
           切换主题请用顶部<b>「个性化」菜单</b>（深夜模式 / 日间模式 / 跟随系统）。<br>
           软件版本与开发者信息见顶部<b>「关于」菜单 → 软件信息</b>。
@@ -1756,8 +1955,8 @@ const CONFIG = {
   weekendDays: [5, 6],          // 周六周日的索引
   // 注意：每人每周班次上限不再是写死的常量，改由 state.maxShiftsPerWeek 配置
   //（是否生效看 state.maxShiftsEnabled 开关），默认值见 MAX_SHIFTS_DEFAULT。
-  // 忽略的课程名称关键词（整周实训/实习类课程不计入冲突）
-  ignoreCourseKeywords: ['实训', '实习','实践', '课程设计', '毕业设计']
+  // 注意：这里**没有**「自动忽略课程关键词」——课程忽略一律由用户手动点击决定，
+  // 见下方 parseCourses() 与「课程忽略管理」一节。别再引入按课程名自动忽略的规则。
 };
 
 // ── 排班日分组 ──────────────────────────────────────────────
@@ -2098,6 +2297,11 @@ function sortShifts(list) {
 // ============================================================
 //  状态
 // ============================================================
+/* 导出时同一班次里多个名字的分隔符（见 §4.17）：
+   '、' = 顿号（默认，一行显示）；'newline' = 换行符（单元格内一行一个）。 */
+const EXPORT_SEP_DEFAULT = '、';
+const EXPORT_SEP_NEWLINE = 'newline';
+
 const state = {
   students: [],           // [{sid, name, status, courses, rawCourses, nowWeek}]
   currentWeek: 'odd',     // 'odd' | 'even'
@@ -2110,13 +2314,20 @@ const state = {
   tplDraft: null,                    // 模板编辑弹窗中的草稿
   isScheduling: false,
   studentNames: {},       // 学号 -> 姓名映射（缓存）
-  ignoredCourses: {},     // { sid: Set of course_num } 被忽略的课程
+  ignoredCourses: {},     // { sid: Set of courseId } 被**手动**忽略的课程（唯一来源，见 §4.18）
   maxShiftsPerWeek: 3,    // 每人每周最多班次数值（见 §4.8）
   maxShiftsEnabled: false, // 「限制每人每周班次」开关；false=不限制（默认）
   continuousShifts: false, // 连续排班偏好：true=尽量连班，false=尽量分散（见 §4.10）
   // 锁定的排班：{ odd: { [shiftKey]: [sid, ...] }, even: {...} }
   // 锁住的是「该同学 + 该班次」这个位置，重新排班（runSchedule）不会改变它
   locks: { odd: {}, even: {} },
+  // 「学号列表上锁定」的学号：自动排班既不添加、也不修改这些同学的班次（见 §4.9.1）
+  studentLocks: [],
+  // 左侧学号列表的搜索词（纯视图过滤，不影响排班 / 抓课表 / 导出，见 §4.15）
+  studentQuery: '',
+  // 导出设置：同一个班次里多个名字之间的分隔符，'、'（默认）或 'newline'（见 §4.17）
+  exportSeparator: EXPORT_SEP_DEFAULT,
+  exportPending: null,       // 导出对话框待执行的动作：'duty' | 'free' | null
   currentCourseModalSid: null  // 当前打开课表弹窗的学生学号
 };
 
@@ -2266,9 +2477,9 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 });
 
 // ============================================================
-//  顶部菜单栏（文件 / 个性化 / 关于）
+//  顶部菜单栏（文件 / 编辑 / 个性化 / 关于）
 // ============================================================
-const MENU_IDS = ['menuFile', 'menuPersonal', 'menuAbout'];
+const MENU_IDS = ['menuFile', 'menuEdit', 'menuPersonal', 'menuAbout'];
 
 /** 当前展开的一级菜单 id（null = 全部收起） */
 let openMenuId = null;
@@ -2396,6 +2607,57 @@ function highlightStudent(sid, show) {
   });
 }
 
+/**
+ * 鼠标悬浮到**值班表里的班次标签**上时调用：高亮 + 把左侧对应同学滚进可视区。
+ *
+ * 与 `highlightStudent()` 分开是刻意的（用户要求「浮在班次上时列表滚到该同学」）：
+ * 左侧列表项自己的 mouseenter 仍走 `highlightStudent()`，**不触发滚动** ——
+ * 否则鼠标在列表边缘上下移动时会不停地把条目吸进视野，反而更晃。
+ */
+function hoverScheduleStudent(sid, show) {
+  highlightStudent(sid, show);
+  if (!show) return;
+  const listItem = document.querySelector(`.student-item[data-sid="${sid}"]`);
+  if (listItem) scrollStudentIntoView(listItem);
+}
+
+/**
+ * 把左侧学号列表里的某个条目滚进可视区（见 §4.16）。
+ *
+ * 三条口径：
+ *   1. **只在「不在可视区」时才滚**。按「最近边」语义手算最小滚动量：
+ *      条目已经完整可见就一个像素都不动 —— 否则鼠标划过一排班次时，
+ *      列表会跟着一跳一跳的（用户明确选了「只在目标不可见时才滚」）。
+ *   2. **滚动容器是 `#studentList` 本身**（它才是 `overflow-y:auto` 的那个），
+ *      用它的 scrollTop 而不是 scrollIntoView()，避免连带把整个页面/其它容器也滚了。
+ *   3. 条目被搜索过滤掉时列表里根本没有这个节点，调用方传进来的就是 null，
+ *      属正常状态，不做任何事（搜索时不该乱滚，见 §4.15）。
+ */
+function scrollStudentIntoView(listItem) {
+  if (!listItem || typeof listItem.getBoundingClientRect !== 'function') return;
+  const container = document.getElementById('studentList');
+  if (!container || typeof container.getBoundingClientRect !== 'function') return;
+
+  const itemRect = listItem.getBoundingClientRect();
+  const boxRect = container.getBoundingClientRect();
+  if (!itemRect || !boxRect) return;
+  if ((itemRect.height === 0 && boxRect.height === 0) || boxRect.height === 0) return;   // 无布局信息（自测桩）→ 不动
+
+  const PAD = 4;   // 上下各留一点余量，别让条目紧贴边框
+
+  let delta = 0;
+  if (itemRect.top < boxRect.top + PAD) {
+    delta = itemRect.top - (boxRect.top + PAD);              // 在可视区上方 → 向上滚
+  } else if (itemRect.bottom > boxRect.bottom - PAD) {
+    delta = itemRect.bottom - (boxRect.bottom - PAD);        // 在可视区下方 → 向下滚
+  }
+  if (delta === 0) return;                                   // 已经完整可见：一个像素都不动
+
+  const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+  const next = Math.min(maxScroll, Math.max(0, (container.scrollTop || 0) + delta));
+  if (next !== container.scrollTop) container.scrollTop = next;
+}
+
 function formatTime(minutes) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -2461,6 +2723,7 @@ function clearAll() {
     state.students = [];
     state.assignments = { odd: {}, even: {} };
     state.locks = { odd: {}, even: {} };
+    state.studentLocks = [];   // 人都没了，学生锁自然一并清空
     persistLocks();
     renderStudentList();
     refreshView();
@@ -2479,6 +2742,7 @@ function removeStudent(sid) {
   }
   // 人已移除，其锁定记录一并清除，避免残留指向不存在的人
   dropLocksOfStudent(sid);
+  dropStudentLock(sid);
   persistLocks();
   renderStudentList();
   refreshView();
@@ -2555,6 +2819,12 @@ function renderStudentList() {
     return cb - ca;
   });
 
+  // 搜索过滤（纯视图，见 §4.15）：在排序之后做，因此过滤结果的相对顺序不变。
+  // 注意 newSids / 错峰记账仍按**全部学生**算 —— 过滤只是少渲染几条，
+  // 不能让「搜索一下」被误判成「这些人都是新来的」而重放整列入场动画。
+  const visible = filterStudentsByQuery(sorted);
+  const searching = !!normalizeStudentQuery(state.studentQuery);
+
   // 每个新条目的错峰延迟：按新条目在「渲染次序」里的序号递增，整体封顶
   // （人多时自动压缩间隔：新人越多，每一步越小，最后一条的延迟不超过 STAGGER_MAX_MS）
   const newCount = newSids.size;
@@ -2570,17 +2840,22 @@ function renderStudentList() {
     }
   }
 
-  container.innerHTML = sorted.map(s => {
+  if (visible.length === 0) {
+    // 有学号但一条都没匹配上 → 给出明确说明，而不是一片空白
+    container.innerHTML = `<div class="student-empty">没有匹配「${escapeHtml(state.studentQuery)}」的姓名或学号<br>（共 ${state.students.length} 人）</div>`;
+  } else {
+  container.innerHTML = visible.map(s => {
     const shiftCount = hasAssignments ? getStudentShiftCount(s.sid) : 0;
     const isNew = newSids.has(s.sid);
+    const locked = isStudentLocked(s.sid);   // 学生锁（锁「人」，见 §4.9.1）
     // 延迟用 CSS 变量逐条写入：只给真正要播动画的新条目，老条目不产生内联动画样式
     const stagger = isNew && step > 0
       ? ` style="--stagger-delay:${delayOfNewSid.get(s.sid)}ms"`
       : '';
     return `
-    <div class="student-item${isNew ? ' is-new' : ''}"${stagger} onclick="showStudentCourse('${s.sid}')"
-         title="点击查看课表 | 拖拽到值班表"
-         draggable="true" data-sid="${s.sid}"
+    <div class="student-item${isNew ? ' is-new' : ''}${locked ? ' locked' : ''}"${stagger} onclick="showStudentCourse('${s.sid}')"
+         title="${locked ? '已锁定：重新排班不会添加或修改他的班次（点锁图标解锁）' : '点击查看课表 | 拖拽到值班表'} | 点锁图标可锁定"
+         draggable="true" data-sid="${s.sid}"${locked ? ' data-locked="1"' : ''}
          ondragstart="onStudentDragStart(event)"
          ondragend="onStudentDragEnd(event)"
          onmouseenter="highlightStudent('${s.sid}', true)"
@@ -2590,21 +2865,101 @@ function renderStudentList() {
       <span class="meta">
         ${hasAssignments ? `<span class="shift-badge">${shiftCount}</span>` : ''}
         <span class="status status-${s.status}">${statusLabel(s.status)}</span>
+        <span class="lock-btn" onclick="event.stopPropagation();toggleStudentLock('${s.sid}')"
+              title="${locked ? '已锁定：重新排班不会添加或修改他的班次（点击解锁）' : '锁定该同学：重新排班不添加也不修改他的班次'}">${locked ? LOCK_ICON_CLOSED : LOCK_ICON_OPEN}</span>
         <span class="remove-btn" onclick="event.stopPropagation();removeStudent('${s.sid}')" title="移除">×</span>
       </span>
     </div>
   `}).join('');
-
-  if (hasAssignments) {
-    const totalShifts = getTotalShiftCount();
-    count.textContent = `共 ${state.students.length} 人 · 总排班 ${totalShifts} 次`;
-  } else {
-    count.textContent = `共 ${state.students.length} 人`;
   }
+
+  // 计数文案：搜索时同时给出「共 N 人 / 筛出 M 人」，避免用户以为学号被删了（见 §4.15）
+  const totalTxt = hasAssignments
+    ? `共 ${state.students.length} 人 · 总排班 ${getTotalShiftCount()} 次`
+    : `共 ${state.students.length} 人`;
+  count.textContent = searching ? `${totalTxt} · 筛出 ${visible.length} 人` : totalTxt;
+
+  // 「清除」按钮：有搜索词时才显示
+  const clearBtn = document.getElementById('studentSearchClear');
+  if (clearBtn) clearBtn.hidden = !searching;
 
   // 已渲染过的学号记为「播过动画」；顺带把已移除的人丢掉，
   // 这样同一个人被删掉后重新导入仍会正常播放入场动画（也避免集合无限增长）。
   _animatedSids = new Set(state.students.map(s => s.sid));
+}
+
+// ============================================================
+//  学号列表搜索（纯视图过滤，见 §4.15）
+// ============================================================
+/*
+ * 口径（用户确认）：
+ *   · 对**姓名**与**学号**做不区分大小写的子串匹配，任一命中即显示；
+ *   · 只过滤左侧列表的**显示**——不参与排班、抓课表、导出，也不改动 state.students；
+ *   · 首尾空白忽略；空查询词 = 不过滤。
+ * 因此 fetchAllSchedules()、runSchedule()、export* 都继续遍历完整的 state.students。
+ */
+
+/** 规范化搜索词：去首尾空白 + 转小写（空串表示不过滤） */
+function normalizeStudentQuery(raw) {
+  return String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+}
+
+/** 单个学生是否命中搜索词（空查询词 → 全部命中） */
+function studentMatchesQuery(student, query) {
+  const q = normalizeStudentQuery(query);
+  if (!q) return true;
+  const sid = String(student.sid || '').toLowerCase();
+  const name = String(student.name || '').toLowerCase();
+  return sid.includes(q) || name.includes(q);
+}
+
+/** 按当前（或指定）搜索词过滤学生列表，保持传入顺序 */
+function filterStudentsByQuery(students, query) {
+  const q = normalizeStudentQuery(query === undefined ? state.studentQuery : query);
+  if (!q) return [...students];
+  return students.filter(s => studentMatchesQuery(s, q));
+}
+
+/** 某学号当前是否显示在左侧列表里（搜索过滤后可能被隐藏） */
+function isStudentVisible(sid) {
+  const s = state.students.find(st => st.sid === sid);
+  return !!s && studentMatchesQuery(s, state.studentQuery);
+}
+
+/** 输入框内容变化：更新查询词并重渲染列表（不碰 state.students） */
+function setStudentQuery(value) {
+  state.studentQuery = String(value === undefined || value === null ? '' : value);
+  renderStudentList();
+}
+
+/** 清除搜索：清空输入框、查询词并重渲染；同时隐藏「清除」按钮 */
+function clearStudentQuery() {
+  state.studentQuery = '';
+  const input = document.getElementById('studentSearch');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('studentSearchClear');
+  if (clearBtn) clearBtn.hidden = true;
+  renderStudentList();
+}
+
+/** 搜索框键盘：Esc 清除搜索（与「点 × 清除」等价） */
+function onStudentSearchKeydown(event) {
+  if (!event) return;
+  if (event.key === 'Escape') {
+    if (normalizeStudentQuery(state.studentQuery)) {
+      clearStudentQuery();
+      if (event.stopPropagation) event.stopPropagation();   // 别把 Esc 透给全局（否则会去关弹窗）
+    }
+  }
+}
+
+/** 只读默认值：搜索词同样不持久化（见 §7.3），每次打开都是「不过滤」 */
+function loadStudentQuery() {
+  state.studentQuery = '';
+  const input = document.getElementById('studentSearch');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('studentSearchClear');
+  if (clearBtn) clearBtn.hidden = true;
 }
 
 function statusLabel(status) {
@@ -2621,10 +2976,22 @@ function statusLabel(status) {
  * 这里就地更新姓名与状态徽标，顺序与统计都没变，所以不需要重排。
  *
  * 返回 false 表示这条不在 DOM 里（例如列表刚被清空），调用方回退到整列重渲染。
+ *
+ * 搜索（§4.15）带来的一个重要区分：**「被搜索过滤掉」不等于「不在 DOM 里」**。
+ * 若这条只是没通过筛选，返回 true（什么都不做）—— 否则 fetchAllSchedules() 的
+ * `.finally()` 会把每一张抓回来的课表都当成「列表坏了」而整列重渲染，
+ * 正在搜索的用户会看到列表反复闪烁。
  */
 function updateStudentListItem(sid) {
   const node = document.querySelector(`.student-item[data-sid="${sid}"]`);
-  if (!node) return false;
+  if (!node) {
+    // 没找到节点时区分两种情况：
+    //   · 这个人确实在名单里、只是被搜索过滤掉了 → 返回 true（什么都不用做，
+    //     调用方不该因此整列重渲染，否则正在搜索的用户会看到列表反复闪烁）；
+    //   · 名单里没有他，或他本该显示却不见了（列表真的坏了）→ 返回 false，让调用方回退整列重渲染。
+    const s = state.students.find(st => st.sid === sid);
+    return !!s && !isStudentVisible(sid);
+  }
   const student = state.students.find(s => s.sid === sid);
   if (!student) return false;
 
@@ -2741,15 +3108,9 @@ async function fetchAllSchedules() {
           student.courses = parseCourses(data.courses, student.sid);
           student.rawCourses = data.courses;
           student.status = 'ready';
-          // 清除旧手动忽略，以本次自动忽略为准
-          if (state.ignoredCourses[student.sid]) {
-            state.ignoredCourses[student.sid].clear();
-          }
-          for (const c of student.courses) {
-            c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-              || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-            c.ignored = c.autoIgnored;
-          }
+          // 注意：**不要**清空 state.ignoredCourses[student.sid]。
+          // 课程忽略只由用户手动标记，刷新课表后这些标记必须保留（parseCourses 会按
+          // 同一套 courseId 重新套用），否则用户每刷新一次就白忽略一遍（见 §4.18）。
         } else {
           student.status = 'error';
         }
@@ -2777,7 +3138,7 @@ async function fetchAllSchedules() {
   showToast(`课表获取完成：成功 ${successCount} 人，失败 ${failCount} 人`, failCount > 0 ? 'error' : 'success');
 }
 
-function parseCourses(data, sid, skipAutoIgnore = false) {
+function parseCourses(data, sid) {
   const courses = [];
   const ignoredSet = state.ignoredCourses[sid] || new Set();
   for (const item of data) {
@@ -2788,12 +3149,6 @@ function parseCourses(data, sid, skipAutoIgnore = false) {
     const courseId = item.class_id
         ? `${item.class_id}_d${item.hash_day}_p${item.begin_lesson}_w${firstWeek}`
         : `${item.course_num || courseName}_d${item.hash_day}_p${item.begin_lesson}_w${firstWeek}`;
-    const isManuallyIgnored = ignoredSet.has(courseId);
-
-    // 自动忽略：关键词匹配 或 仅在18周及以后的课程（期末周）。导入时不自动忽略
-    const isAutoIgnored = skipAutoIgnore ? false
-      : CONFIG.ignoreCourseKeywords.some(kw => courseName.includes(kw))
-        || (item.week && item.week.length > 0 && item.week.every(w => w >= 18));
 
     const weekday = (item.hash_day !== undefined ? item.hash_day + 1 : 0);
     const begin = item.begin_lesson || 1;
@@ -2824,9 +3179,9 @@ function parseCourses(data, sid, skipAutoIgnore = false) {
       hasOdd: oddWeeks.length > 0,
       hasEven: evenWeeks.length > 0,
       isFullDay: isFullDay,
-      // 若用户手动点过（在ignoredSet中）则取反自动忽略，否则跟随自动忽略
-      ignored: ignoredSet.has(courseId) ? !isAutoIgnored : isAutoIgnored,
-      autoIgnored: isAutoIgnored
+      // 忽略状态**只**来自用户的显式手动标记（见 §4.18）：
+      // 没有任何按课程名 / 周次自动忽略的规则，parseCourses 绝不自行把课程标记为忽略。
+      ignored: ignoredSet.has(courseId)
     });
   }
   return courses;
@@ -2942,6 +3297,7 @@ function pruneInvalidAssignments(tpl) {
   }
   // 排班被丢弃后，指向已消失槽位的锁定记录也要清理，避免残留脏数据
   pruneLocks();
+  pruneStudentLocks();
   return dropped;
 }
 
@@ -2971,12 +3327,30 @@ function isLocked(sid, key, weekType) {
   return Array.isArray(list) && list.includes(sid);
 }
 
-/** 某个槽位里被锁定的学号列表 */
+/** 某个槽位里被锁定的学号列表（位置锁） */
 function lockedSidsOf(key, weekType) {
   const wt = weekType || state.currentWeek;
   const bucket = state.locks && state.locks[wt];
   const list = bucket && bucket[key];
   return Array.isArray(list) ? list.slice() : [];
+}
+
+/**
+ * 某个槽位里「自动排班必须原样保留」的学号列表 —— 位置锁与学生锁的并集。
+ * 排班算法只看这一个口径，不要各写一份（见 §4.9 / §4.9.1）。
+ *
+ * `assignments` 传当前排班表：学生锁的成员是从**槽位现有内容**里挑出来的，
+ * 因此他只会留在原本就待着的格子，不会凭空出现在别处。
+ */
+function keptSidsOf(key, weekType, assignments, stuLockedSet) {
+  const wt = weekType || state.currentWeek;
+  const locked = stuLockedSet || studentLockedSet();
+  const kept = lockedSidsOf(key, wt);
+  const slot = (assignments && assignments[wt] && assignments[wt][key]) || [];
+  for (const sid of slot) {
+    if (locked.has(sid) && !kept.includes(sid)) kept.push(sid);
+  }
+  return kept;
 }
 
 /**
@@ -3065,6 +3439,100 @@ function persistLocks() {}
 
 function loadLocks() {
   state.locks = { odd: {}, even: {} };
+  state.studentLocks = [];   // 学生锁同样不持久化，见 §4.9.1 / §7.3
+}
+
+// ============================================================
+//  学生级锁定（学号列表上的锁，见 §4.9.1）
+// ============================================================
+// 与上面「位置锁」的区别：
+//   · 位置锁（state.locks）锁的是「该同学 + 该班次」这一个格子；
+//   · 学生锁（state.studentLocks）锁的是「这个人」——自动排班对他**既不添加也不修改**，
+//     也就是把他现有的所有班次整体冻结，且不再往别处加派。
+// 两套锁定互不干扰，可以同时存在。
+
+/** 该学号是否被锁定（自动排班不添加也不修改他的班次） */
+function isStudentLocked(sid) {
+  return Array.isArray(state.studentLocks) && state.studentLocks.includes(sid);
+}
+
+/** 当前被锁定的学号集合（热循环里 O(1) 查表用） */
+function studentLockedSet() {
+  return new Set(Array.isArray(state.studentLocks) ? state.studentLocks : []);
+}
+
+/**
+ * 切换某个学号的「学生锁」，返回切换后是否处于锁定。
+ * 界面上由左侧学号列表里的锁按钮调用。
+ *
+ * 锁定只是**冻结现状**，不负责把该同学现在的班次写进 `state.locks`：
+ * 每次重新排班（runSchedule）都会用 `initAssignments()` 按当前排班快照回填。
+ */
+function toggleStudentLock(sid) {
+  if (!Array.isArray(state.studentLocks)) state.studentLocks = [];
+  const i = state.studentLocks.indexOf(sid);
+  let locked;
+  if (i === -1) {
+    state.studentLocks.push(sid);
+    locked = true;
+  } else {
+    state.studentLocks.splice(i, 1);
+    locked = false;
+  }
+  persistLocks();
+  renderStudentList();   // 立刻反映锁图标与配色
+  showToast(locked
+    ? '已锁定该同学：重新排班时不会添加或修改他的班次'
+    : '已解锁该同学：可以重新参与自动排班', locked ? 'success' : 'info');
+  return locked;
+}
+
+/** 规范化学生锁（任何外部来源都必须经过它） */
+function normalizeStudentLocks(raw) {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter(s => typeof s === 'string' && s))];
+}
+
+/**
+ * 清理失效的学生锁：已不在学生名单里的一律丢弃。
+ * **学生列表为空时不做这个判断**，与 `pruneLocks()` 同理 —— 否则刚打开页面
+ * （还没导入学号）就会把导入数据里带回来的锁定全部清掉。
+ */
+function pruneStudentLocks() {
+  if (!Array.isArray(state.studentLocks)) { state.studentLocks = []; return 0; }
+  if (state.students.length === 0) return 0;
+  const known = new Set(state.students.map(s => s.sid));
+  const before = state.studentLocks.length;
+  state.studentLocks = state.studentLocks.filter(sid => known.has(sid));
+  return before - state.studentLocks.length;
+}
+
+/** 解除某个学号的学生锁（移除同学 / 清空数据时用） */
+function dropStudentLock(sid) {
+  if (!Array.isArray(state.studentLocks)) { state.studentLocks = []; return; }
+  state.studentLocks = state.studentLocks.filter(s => s !== sid);
+}
+
+/**
+ * 把「学生锁」翻译成一份完整的排班快照：{ odd: { [key]: [sid,...] }, even: {...} }。
+ *
+ * 这是任务一的核心：`initAssignments()` 会用这份快照回填槽位，
+ * 于是被锁同学**现有的每一个班次**都原地保留 —— 既不会被换人、也不会被清空，
+ * 等价于自动地为他现有的每个位置都加了一把「位置锁」。
+ * 只保留当前模板里真实存在的班次（陈旧键交给 pruneInvalidAssignments 处理）。
+ */
+function lockedStudentAssignments() {
+  const snap = { odd: {}, even: {} };
+  if (!Array.isArray(state.studentLocks) || state.studentLocks.length === 0) return snap;
+  const locked = studentLockedSet();
+  for (const weekType of ['odd', 'even']) {
+    const bucket = state.assignments[weekType] || {};
+    for (const key of Object.keys(bucket)) {
+      const kept = (bucket[key] || []).filter(sid => locked.has(sid));
+      if (kept.length > 0) snap[weekType][key] = kept;
+    }
+  }
+  return snap;
 }
 
 // ============================================================
@@ -3074,8 +3542,16 @@ function loadLocks() {
 /**
  * 按当前模板重建所有槽位（会清空已有排班，但**锁定的位置原样保留**）。
  * 这是「锁定后不受两种自动排班影响」的第一道保证。
+ *
+ * 两类锁定都在这里回填（见 §4.9 / §4.9.1）：
+ *   1. 位置锁 `state.locks`：该同学 + 该班次；
+ *   2. 学生锁 `state.studentLocks`：该同学**当前所在的所有班次**（用重建前的排班快照）。
+ * 学生锁必须从**快照**回填，因为下面马上就把 `state.assignments` 整个换掉了。
  */
 function initAssignments() {
+  // 先取「被锁同学当前所在位置」的快照 —— 必须在重建之前取
+  const lockedSnap = lockedStudentAssignments();
+
   const next = { odd: {}, even: {} };
   for (const weekType of ['odd', 'even']) {
     for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
@@ -3093,6 +3569,17 @@ function initAssignments() {
       next[weekType][key] = [...bucket[key]];
     }
   }
+  // 学生锁：把他的现有班次也原地放回（与位置锁合并，去重）
+  for (const weekType of ['odd', 'even']) {
+    for (const key of Object.keys(lockedSnap[weekType])) {
+      if (!Array.isArray(next[weekType][key])) continue;   // 班次已不在模板里 → 交给剪枝清理
+      const merged = next[weekType][key].slice();
+      for (const sid of lockedSnap[weekType][key]) {
+        if (!merged.includes(sid)) merged.push(sid);
+      }
+      next[weekType][key] = merged;
+    }
+  }
   state.assignments = next;
 }
 
@@ -3100,7 +3587,7 @@ function initAssignments() {
  * 每人每周最多班次上限。0 = 不限制。
  *
  * 语义（用户确认，见 AGENT.md §4.8）：
- *   - 上限由左侧「限制每人每周班次」开关控制（`state.maxShiftsEnabled`）：
+ *   - 上限由「编辑」菜单里的「限制每人每周班次」开关控制（`state.maxShiftsEnabled`）：
  *     勾选才套用数值，不勾选一律不限制（等价于旧版「开始排班」）；
  *   - 口径是「每周」：单周、双周各自单独计数；
  *   - 无论是否套用上限，都尽量让每人的班次数相差不大（极差越小越好）。
@@ -3402,6 +3889,10 @@ function collectShiftsForWeek(weekType) {
  *
  * **锁定优先**：槽位里已锁定的成员原样保留（既不换人也不清空），
  * 只把剩余名额按常规规则分配给其他同学；锁定成员照常计入负载，保证均衡口径不失真。
+ *
+ * 这里的「锁定」包含两类（见 §4.9 / §4.9.1）：
+ *   · 位置锁 `state.locks`：该同学 + 该班次；
+ *   · 学生锁 `state.studentLocks`：该同学现有的每一个班次都原地冻结（不添加、不修改）。
  */
 function fillWeekGreedy(assignments, students, sids, weekType, cap) {
   const load = {};
@@ -3413,13 +3904,16 @@ function fillWeekGreedy(assignments, students, sids, weekType, cap) {
   const occ = {};
   for (const sid of sids) occ[sid] = new Set();
 
+  // 被「学生锁」锁住的学号：既不进候选池，也不离开他现有的位置
+  const stuLocked = studentLockedSet();
+
   // 先把「已锁定」的既有人数计入负载，否则锁定的人会被当成没排班、反复被加派。
   // 只统计当前模板里真实存在的班次，避免残留的失效锁定键虚增负载。
   for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
     for (const shift of getShiftsForDay(dayIdx)) {
       if (!shiftAppliesToWeek(shift, weekType)) continue;
       const key = generateShiftKey(weekType, dayIdx, shift.id);
-      for (const sid of lockedSidsOf(key, weekType)) {
+      for (const sid of keptSidsOf(key, weekType, assignments, stuLocked)) {
         if (load[sid] !== undefined) {
           load[sid]++;
           occ[sid].add(occupiedSlotKey(dayIdx, shift.id));
@@ -3432,7 +3926,7 @@ function fillWeekGreedy(assignments, students, sids, weekType, cap) {
     const key = generateShiftKey(weekType, dayIdx, shift.id);
 
     // ① 锁定的位置原地保留（即便超出容量也不动它，锁定是用户显式意愿）
-    const kept = lockedSidsOf(key, weekType);
+    const kept = keptSidsOf(key, weekType, assignments, stuLocked);
     // ② 剩余名额才交给算法
     const remaining = Math.max(0, shift.capacity - kept.length);
 
@@ -3441,6 +3935,7 @@ function fillWeekGreedy(assignments, students, sids, weekType, cap) {
     const candidates = [];
     for (const sid of sids) {
       if (kept.includes(sid)) continue;   // 已在锁定位上，不重复占名额
+      if (stuLocked.has(sid)) continue;   // 学生锁：不往任何其它班次添加他
       const student = students.find(s => s.sid === sid);
       if (!canTakeShift(student, weekType, dayIdx, shift)) continue;
       if (cap !== Infinity && load[sid] >= cap) continue;
@@ -3551,6 +4046,9 @@ function optimizeBalance(assignments, students, sids, cap, maxRounds) {
   const tracker = makeLoadTracker(assignments, sids);
   const rounds = maxRounds === undefined ? 60 : maxRounds;
 
+  // 被「学生锁」锁住的学号：不能当 heavy 换出，也不能被换进别的槽位（不添加）
+  const stuLocked = studentLockedSet();
+
   // ── 预处理：每个槽位可排的学生（只算一次，避免热循环里反复判课程冲突） ──
   const eligible = {};
   for (const wt of ['odd', 'even']) {
@@ -3558,6 +4056,8 @@ function optimizeBalance(assignments, students, sids, cap, maxRounds) {
       const info = resolveShift(key);
       if (!info || !shiftAppliesToWeek(info.shift, wt)) continue;
       eligible[key] = sids.filter(sid =>
+        // 学生锁：不把他换进任何槽位（不添加），见 §4.9.1
+        !stuLocked.has(sid) &&
         canTakeShift(students.find(s => s.sid === sid), wt, info.dayIdx, info.shift));
     }
   }
@@ -3581,6 +4081,8 @@ function optimizeBalance(assignments, students, sids, cap, maxRounds) {
           if (tracker.total[heavy] === undefined) continue;
           // 锁定的位置不动：既不换人也不换位（均衡搜索必须跳过）
           if (isLocked(heavy, key, wt)) continue;
+          // 学生锁：他现有的每个班次都冻结，不能作为 heavy 换出
+          if (stuLocked.has(heavy)) continue;
           const h = tracker.week[wt][heavy], H = tracker.total[heavy];
 
           for (const light of order) {
@@ -3631,6 +4133,8 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
   const rounds = maxRounds === undefined ? 12 : maxRounds;
   const studentBySid = {};
   for (const s of students) studentBySid[s.sid] = s;
+  // 被「学生锁」锁住的学号：不能参与任何交换（不添加也不离开现有位置，见 §4.9.1）
+  const stuLocked = studentLockedSet();
   let moved = 0;
 
   for (const wt of ['odd', 'even']) {
@@ -3647,6 +4151,7 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
         key, slot,
         cell: occupiedSlotKey(info.dayIdx, info.shift.id),
         eligible: new Set(sids.filter(sid =>
+          !stuLocked.has(sid) &&
           canTakeShift(studentBySid[sid], wt, info.dayIdx, info.shift)))
       });
     }
@@ -3679,6 +4184,7 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
           for (const a of A.slot) {
             // 锁定的位置原地不动：本人不能离开 A，也不能被塞进锁定的 B
             if (isLocked(a, A.key, wt) || isLocked(a, B.key, wt)) continue;
+            if (stuLocked.has(a)) continue;        // 学生锁：不参与交换
             if (B.slot.includes(a)) continue;      // a 已在 B 里，换过去会重复
             if (!B.eligible.has(a)) continue;      // a 换到 B 有课
             occ[a].delete(A.cell); occ[a].add(B.cell);
@@ -3691,6 +4197,7 @@ function optimizeContinuity(assignments, students, sids, maxRounds) {
           const candB = [];
           for (const b of B.slot) {
             if (isLocked(b, B.key, wt) || isLocked(b, A.key, wt)) continue;
+            if (stuLocked.has(b)) continue;        // 学生锁：不参与交换
             if (A.slot.includes(b)) continue;
             if (!A.eligible.has(b)) continue;      // b 换到 A 有课
             occ[b].delete(B.cell); occ[b].add(A.cell);
@@ -3764,7 +4271,7 @@ function countEmptySlots(assignments) {
 /**
  * 排班主入口（由左侧「开始排班」按钮触发）。
  *
- * 用户已要求去掉单独的「均衡排班」按钮：每人每周上限改为左侧的一个开关
+ * 用户已要求去掉单独的「均衡排班」按钮：每人每周上限改为「编辑」菜单里的一个开关
  * （`state.maxShiftsEnabled` + `state.maxShiftsPerWeek`，见 §4.8），
  * 因此这里**不再有模式参数** —— 上限是否生效完全由开关决定。
  *
@@ -4018,7 +4525,7 @@ function renderSchedule() {
       const locked = isLocked(sid, key, wt);
       const lockTitle = locked ? '已锁定：重新排班不会改变此处（点击解锁）' : '锁定：重新排班时此处保持不变';
       const lockIcon = locked ? LOCK_ICON_CLOSED : LOCK_ICON_OPEN;
-      cell += `<span class="student-tag${locked ? ' locked' : ''}" draggable="${locked ? 'false' : 'true'}" data-sid="${sid}" data-key="${key}"${locked ? ' data-locked="1"' : ''} ondragstart="onDragStart(event)" ondragend="onDragEnd(event)" onclick="showStudentCourse('${sid}')" onmouseenter="highlightStudent('${sid}', true)" onmouseleave="highlightStudent('${sid}', false)" title="${locked ? `${sid}（已锁定）` : sid}"><span class="lock-btn" onclick="event.stopPropagation();toggleLock('${key}','${sid}')" title="${lockTitle}">${lockIcon}</span>${nm}<span class="remove-btn" onclick="event.stopPropagation();removeFromShift('${key}','${sid}')">×</span></span>`;
+      cell += `<span class="student-tag${locked ? ' locked' : ''}" draggable="${locked ? 'false' : 'true'}" data-sid="${sid}" data-key="${key}"${locked ? ' data-locked="1"' : ''} ondragstart="onDragStart(event)" ondragend="onDragEnd(event)" onclick="showStudentCourse('${sid}')" onmouseenter="hoverScheduleStudent('${sid}', true)" onmouseleave="hoverScheduleStudent('${sid}', false)" title="${locked ? `${sid}（已锁定）` : sid}"><span class="lock-btn" onclick="event.stopPropagation();toggleLock('${key}','${sid}')" title="${lockTitle}">${lockIcon}</span>${nm}<span class="remove-btn" onclick="event.stopPropagation();removeFromShift('${key}','${sid}')">×</span></span>`;
     }
     return cell + '</div>';
   });
@@ -4364,10 +4871,12 @@ function removeFromShift(key, sid) {
 }
 
 function resetSchedule() {
-  showConfirm('重置排班', '确定要重置所有排班吗？所有锁定也会一并清除。此操作不可撤销。', () => {
+  showConfirm('重置排班', '确定要重置所有排班吗？所有锁定（含学号列表上的锁定）也会一并清除。此操作不可撤销。', () => {
     state.assignments = { odd: {}, even: {} };
     // 排班都没了，锁定位置自然不复存在，必须一起清掉（否则会残留指向空槽位的锁定）
     state.locks = { odd: {}, even: {} };
+    // 学生锁同理：它冻结的是「现有班次」，班次清空后继续锁着只会让该同学一个班都排不到
+    state.studentLocks = [];
     persistLocks();
     renderStudentList();
     refreshView();   // 清空后仍然显示模板时段表格（全部为 0/N）
@@ -4410,15 +4919,7 @@ function showStudentCourse(sid) {
         student.courses = parseCourses(data.courses, student.sid);
         student.rawCourses = data.courses;
         student.status = 'ready';
-        // 清除旧手动忽略，以本次自动忽略为准
-        if (state.ignoredCourses[student.sid]) {
-          state.ignoredCourses[student.sid].clear();
-        }
-        for (const c of student.courses) {
-          c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-            || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-          c.ignored = c.autoIgnored;
-        }
+        // 手动忽略标记保留（不 clear），parseCourses 已按 courseId 重新套用，见 §4.18
         saveIgnoredCourses();
         renderStudentList();
         updateButtons();
@@ -4476,15 +4977,7 @@ async function refreshSingleCourse() {
       student.courses = parseCourses(data.courses, sid);
       student.rawCourses = data.courses;
       student.status = 'ready';
-      // 清除旧手动忽略，以本次自动忽略为准
-      if (state.ignoredCourses[student.sid]) {
-        state.ignoredCourses[student.sid].clear();
-      }
-      for (const c of student.courses) {
-        c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-          || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-        c.ignored = c.autoIgnored;
-      }
+      // 手动忽略标记保留（不 clear），parseCourses 已按 courseId 重新套用，见 §4.18
       saveIgnoredCourses();
       // 刷新弹窗内容
       document.getElementById('courseModalTitle').textContent = `${student.name} (${sid}) - 课表`;
@@ -4575,8 +5068,13 @@ function renderCourseGrid(student) {
 }
 
 // ============================================================
-//  课程忽略管理
+//  课程忽略管理（**只有手动一种来源**，见 §4.18）
 // ============================================================
+/*
+ * 忽略某门课 = 排班时不再把该时段当作冲突，是**纯手工**操作：
+ * 用户在课表弹窗里点课程块切换，除此之外没有任何自动忽略规则
+ * （按课程名关键词、按 18 周及以后等规则都已删除，别再引入）。
+ */
 function toggleCourseIgnore(sid, courseId) {
   if (!state.ignoredCourses[sid]) {
     state.ignoredCourses[sid] = new Set();
@@ -4595,8 +5093,8 @@ function toggleCourseIgnore(sid, courseId) {
     ignoredSet.add(courseId);
   }
 
-  // 新忽略状态：手动标记过则取反自动忽略，否则跟随自动忽略
-  course.ignored = ignoredSet.has(courseId) ? !course.autoIgnored : course.autoIgnored;
+  // 忽略状态只由手动标记决定（集合里就是被忽略）
+  course.ignored = ignoredSet.has(courseId);
 
   saveIgnoredCourses();
   showToast(course.ignored ? '已忽略该课程（排班时将不考虑该时段冲突）' : '已取消忽略', 'info');
@@ -4612,7 +5110,11 @@ function toggleCourseIgnore(sid, courseId) {
   updateButtons();
 }
 
-function resetIgnoredCourses() {
+/**
+ * 「清除忽略」：把该同学**全部手动忽略**的课程一次取消。
+ * 删掉自动忽略后，这里不再「重新套用自动忽略规则」，只做纯粹的清空。
+ */
+function clearIgnoredCourses() {
   const sid = state.currentCourseModalSid;
   if (!sid) return;
 
@@ -4622,14 +5124,11 @@ function resetIgnoredCourses() {
 
   saveIgnoredCourses();
 
-  // 重置学生课表忽略状态：重新计算自动忽略并应用
+  // 学生课表上的 ignored 标记同步清掉（现在只可能来自手动标记）
   const student = state.students.find(s => s.sid === sid);
   if (student && student.courses) {
     for (const course of student.courses) {
-      // 重新计算自动忽略（关键词 + 18周及以后）
-      course.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => course.name.includes(kw))
-        || (course.weeks && course.weeks.length > 0 && course.weeks.every(w => w >= 18));
-      course.ignored = course.autoIgnored;
+      course.ignored = false;
     }
     renderCourseGrid(student);
   }
@@ -4637,7 +5136,7 @@ function resetIgnoredCourses() {
   refreshView();
   highlightAllConflicts();
   updateButtons();
-  showToast('已重置该同学的忽略课程', 'info');
+  showToast('已清除该同学的全部忽略课程', 'info');
 }
 
 function highlightConflictsForStudent(sid) {
@@ -4879,7 +5378,7 @@ function exportDutySchedule() {
     const sheetName = weekType === 'odd' ? '单周值班表' : '双周值班表';
     const ws = buildSheetRows(weekType, (wt, d, shift) => {
       const key = generateShiftKey(wt, d, shift.id);
-      return (state.assignments[wt][key] || []).map(getStudentName).join('、');
+      return joinNames((state.assignments[wt][key] || []).map(getStudentName));
     });
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   }
@@ -4903,7 +5402,7 @@ function exportFreeSchedule() {
         if (!s.courses) return true;
         return !hasConflict(s.courses, weekday, shift.conflictPeriods, wt);
       });
-      return freeStudents.map(s => s.name).join('、');
+      return joinNames(freeStudents.map(s => s.name));
     });
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   }
@@ -4921,10 +5420,13 @@ function exportData() {
     date: new Date().toISOString(),
     template: state.template,
     students: state.students.map(s => {
-      // 导出所有被忽略的课程ID（手动 + 自动）
-      const allIgnored = s.courses
-        ? s.courses.filter(c => c.ignored).map(c => c.courseId)
-        : (state.ignoredCourses[s.sid] ? [...state.ignoredCourses[s.sid]] : []);
+      // 导出被手动忽略的课程 ID。忽略只有手动一种来源（见 §4.18），
+      // 因此以 state.ignoredCourses 这份「手动标记集合」为准 —— 它比
+      // 「遍历当前课表筛 c.ignored」更稳：课表里暂时不存在的课程也能被带出去。
+      const manualSet = state.ignoredCourses[s.sid];
+      const allIgnored = manualSet && manualSet.size > 0
+        ? [...manualSet]
+        : (s.courses ? s.courses.filter(c => c.ignored).map(c => c.courseId) : []);
       return {
         sid: s.sid,
         name: s.name,
@@ -4933,7 +5435,9 @@ function exportData() {
       };
     }),
     assignments: state.assignments,
-    locks: state.locks
+    locks: state.locks,
+    // 学号列表上「锁人不锁位置」的锁定（见 §4.9.1）；旧文件无此字段 → 视为无人被锁
+    studentLocks: state.studentLocks
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -4975,24 +5479,16 @@ function handleImportFile(event) {
           courses: null,
           rawCourses: null
         };
-        // 恢复课表数据
+        // 恢复课表数据（ignoreCourseId 由 state.ignoredCourses 提供，parseCourses 会套用）
         if (s.rawCourses && s.rawCourses.length > 0) {
           student.rawCourses = s.rawCourses;
-          student.courses = parseCourses(s.rawCourses, s.sid, true);
+          student.courses = parseCourses(s.rawCourses, s.sid);
           student.status = 'ready';
         }
         return student;
       });
-      // 补算自动忽略（导入时跳过了，需重新应用规则）
-      state.students.forEach(s => {
-        if (s.courses) {
-          for (const c of s.courses) {
-            c.autoIgnored = CONFIG.ignoreCourseKeywords.some(kw => c.name.includes(kw))
-              || (c.weeks && c.weeks.length > 0 && c.weeks.every(w => w >= 18));
-            c.ignored = c.ignored || c.autoIgnored;
-          }
-        }
-      });
+      // 不再「补算自动忽略」：课程忽略只有手动一种来源，文件里的 ignoredCourses
+      // 已经在上面的 ignoredSet 恢复里被 parseCourses 套用，无需二次计算（见 §4.18）。
       // 恢复值班模板（若文件内没有则沿用当前模板）
       if (data.template) {
         state.template = normalizeTemplate(data.template);
@@ -5003,6 +5499,8 @@ function handleImportFile(event) {
         ? data.assignments : { odd: {}, even: {} };
       // 恢复锁定（旧文件无此字段 → 视为全部未锁定）
       state.locks = normalizeLocks(data.locks);
+      // 恢复「学生锁」（旧文件无此字段 → 视为无人被锁，见 §4.9.1）
+      state.studentLocks = normalizeStudentLocks(data.studentLocks);
       // 若模板 id 在规范化时被改名，同步迁移排班键，避免排班被误判为失效而清除
       remapAssignmentIds(_idRemap);
       pruneInvalidAssignments();
@@ -5022,8 +5520,100 @@ function handleImportFile(event) {
   event.target.value = '';
 }
 
-// 移除旧的弹窗管理
-function downloadModalContent() {}
+// ============================================================
+//  导出设置对话框（见 §4.17）
+// ============================================================
+/*
+ * 「文件」菜单里的「导出值班表 / 导出空课表」现在都先弹这个对话框，
+ * 让用户选好设置再点「导出」，而不是点了就闷头生成文件。
+ *
+ * 历史遗留：原来的 #exportModal 是一个**从未被打开过的死壳子** ——
+ * DOM 里有它，但没有任何代码给它加 `.show`，`closeModal()` / `copyModalContent()`
+ * 更是**根本没有定义**，`downloadModalContent()` 是空函数。副作用是全局 Esc 处理
+ * 末尾那句 `closeModal()` 会在没有弹窗打开时抛 ReferenceError（按 Esc 就报错）。
+ * 这里把壳子改造成真正的设置对话框，并补上缺失的关闭函数，顺带修掉那个崩溃。
+ */
+
+/** 当前分隔符（规范化：非法值回落默认「、」） */
+function getExportSeparator() {
+  return state.exportSeparator === EXPORT_SEP_NEWLINE ? EXPORT_SEP_NEWLINE : EXPORT_SEP_DEFAULT;
+}
+
+/** 分隔符的「实际字符」：顿号，或换行符 */
+function exportSeparatorChar() {
+  return getExportSeparator() === EXPORT_SEP_NEWLINE ? '\n' : EXPORT_SEP_DEFAULT;
+}
+
+/** 把一组姓名按当前分隔符拼成一个单元格文本 */
+function joinNames(names) {
+  return (names || []).join(exportSeparatorChar());
+}
+
+/** 切换分隔符（对话框里的单选） */
+function setExportSeparator(value) {
+  state.exportSeparator = (value === EXPORT_SEP_NEWLINE) ? EXPORT_SEP_NEWLINE : EXPORT_SEP_DEFAULT;
+  syncExportDialog();
+}
+
+/** 只读默认值：导出设置同样不持久化（见 §7.3） */
+function loadExportSettings() {
+  state.exportSeparator = EXPORT_SEP_DEFAULT;
+  state.exportPending = null;
+}
+
+/** 把当前设置同步进对话框（勾选态 + 提示文案） */
+function syncExportDialog() {
+  const isNewline = getExportSeparator() === EXPORT_SEP_NEWLINE;
+  const dun = document.getElementById('exportSepDun');
+  const nl = document.getElementById('exportSepNewline');
+  if (dun) dun.checked = !isNewline;
+  if (nl) nl.checked = isNewline;
+
+  const desc = document.getElementById('exportDialogDesc');
+  if (desc) {
+    const isDuty = state.exportPending !== 'free';
+    desc.textContent = isDuty
+      ? '导出值班表（Excel，含单周 / 双周值班表与「人员表」三个工作表）。'
+      : '导出空课表（Excel，含单周 / 双周两张工作表）。';
+  }
+  const hint = document.getElementById('exportDialogHint');
+  if (hint) {
+    // 注意：本程序用的 xlsx 库是**社区版**，它无法写入单元格样式（wrapText）。
+    // 换行符本身会正确写进单元格（SheetJS 会带 xml:space="preserve"），
+    // 但 Excel 需要该格勾选「自动换行」才会显示成多行 —— 所以这里如实说明，别写成「已自动开启」。
+    hint.textContent = isNewline
+      ? '换行符会写进单元格；Excel 需对该列开启「自动换行」才会显示成多行（本程序使用的开源库社区版无法写入单元格样式）。'
+      : '顿号：同一班次的多位同学写成「张三、李四」，占一行。';
+  }
+}
+
+/**
+ * 打开导出设置对话框。kind = 'duty' | 'free'，决定底部「导出」按钮执行哪个导出。
+ * 入口是「文件」菜单 → 导出值班表 / 导出空课表（都改成了先弹这个框）。
+ */
+function openExportDialog(kind) {
+  state.exportPending = (kind === 'free') ? 'free' : 'duty';
+  syncExportDialog();
+  document.getElementById('exportModal').classList.add('show');
+}
+
+/** 关闭导出对话框（不执行导出）。× / 取消 / Esc / 点遮罩都走这里。 */
+function closeExportDialog() {
+  state.exportPending = null;
+  document.getElementById('exportModal').classList.remove('show');
+}
+
+/** 点「导出」：按当前设置真正生成文件，然后关框 */
+function confirmExportDialog() {
+  const kind = state.exportPending;
+  closeExportDialog();       // 先关框，避免导出异常时框卡在那儿
+  if (kind === 'free') exportFreeSchedule();
+  else exportDutySchedule();
+}
+
+/** 供自测与老脚本使用的兼容入口（旧按钮曾接这个名字） */
+function closeModal() { closeExportDialog(); }
+function downloadModalContent() { confirmExportDialog(); }
 
 // ============================================================
 //  值班模板编辑器
@@ -5557,16 +6147,76 @@ function exportTemplateFile() {
   showToast('模板已导出', 'success');
 }
 
+/**
+ * 应用一份「从文件导入的值班模板」。
+ *
+ * 这是 §4.12 末尾那条 bug 的修复点：菜单里的「导入模板…」原来只把解析结果写进草稿
+ * `state.tplDraft` 并弹一条 toast，**既没有自动保存、也没有打开编辑器**——
+ * 弹窗是 `display:none`，`renderTemplateEditor()` 写的 HTML 用户根本看不到，
+ * 界面看上去「点了没反应」；更糟的是草稿只在内存里，用户下次打开编辑器时
+ * `openTemplateEditor()` 会用当前模板重新深拷贝，把刚导入的内容静默覆盖掉。
+ *
+ * 现在的口径（用户确认）：**导入即生效，并自动打开模板编辑器**供用户确认/微调。
+ *   · 校验通过 → 直接写进 `state.template`、剪枝排班、切换编辑器草稿为新模板；
+ *   · 有**阻断性**错误 → 不直接生效（避免把坏模板套到现有排班上），
+ *     只把草稿载入编辑器并标红，让用户改完自己点「保存并应用」。
+ *
+ * 返回 `{ applied, errors, name, dropped }`，供自测断言真实行为。
+ */
+function applyImportedTemplate(parsed) {
+  const draft = normalizeTemplate(parsed);
+  const name = draft.name;
+
+  // 先借草稿跑一次校验：validateDraft() 读的就是 state.tplDraft
+  const prevDraft = state.tplDraft;
+  state.tplDraft = draft;
+  const errors = validateDraft();
+
+  if (errors.length > 0) {
+    // 阻断性错误：不直接生效，载入草稿并打开编辑器让用户修正
+    renderTemplateEditor(errors);
+    document.getElementById('templateModal').classList.add('show');
+    showToast(`模板「${name}」有 ${errors.length} 处问题，已打开编辑器，请修正后点「保存并应用」`, 'error');
+    return { applied: false, errors, name, dropped: 0 };
+  }
+
+  // 直接生效
+  state.template = draft;
+  persistTemplate();
+  const dropped = pruneInvalidAssignments(draft);
+
+  // 继续用「已生效的模板」做草稿：用户可以在编辑器里接着微调，改完再点保存
+  state.tplDraft = JSON.parse(JSON.stringify(draft));
+  renderTemplateEditor();
+  document.getElementById('templateModal').classList.add('show');
+
+  renderStudentList();
+  refreshView();
+  updateButtons();
+
+  if (dropped.length > 0) {
+    showToast(`已应用模板「${name}」，同时清除了 ${dropped.length} 处失效排班，请重新排班`, 'error');
+  } else {
+    showToast(`已应用模板「${name}」：${describeTemplate(draft)}`, 'success');
+  }
+  return { applied: true, errors: [], name, dropped: dropped.length };
+}
+
 function handleTemplateFileImport(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
-      const parsed = normalizeTemplate(JSON.parse(e.target.result));
-      state.tplDraft = parsed;
-      renderTemplateEditor();
-      showToast(`已载入模板「${parsed.name}」，点击「保存并应用」生效`, 'success');
+      const parsed = JSON.parse(e.target.result);
+      // 空对象 / 非对象会被 normalizeTemplate 兜底成默认模板；这里明确拦下明显不对的文件，
+      // 避免用户选错文件后「模板被静默换成默认值」而毫无察觉。
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+          || (!parsed.groups && !parsed.layout && !parsed.name)) {
+        showToast('不是有效的工作模板文件（缺少 groups / layout / name）', 'error');
+        return;
+      }
+      applyImportedTemplate(parsed);
     } catch (err) {
       showToast('模板文件解析失败', 'error');
     }
@@ -5838,9 +6488,14 @@ document.addEventListener('keydown', (e) => {
       closeSidImport();
       return;
     }
-    closeModal();
+    // 导出设置对话框（原先是裸的 closeModal()，那个函数当时根本没定义，
+    // 于是「没有任何弹窗时按 Esc」会抛 ReferenceError；现在补了定义并加上开关判断）
+    if (document.getElementById('exportModal').classList.contains('show')) {
+      closeExportDialog();
+      return;
+    }
   }
-  // Ctrl+Enter 触发排班（上限是否生效由左侧「限制每人每周班次」开关决定）
+  // Ctrl+Enter 触发排班（上限是否生效由「编辑」菜单里的「限制每人每周班次」开关决定）
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     if (state.students.length > 0) runSchedule();
   }
@@ -5851,9 +6506,9 @@ document.getElementById('aboutModal').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeAbout();
 });
 
-// 关闭弹窗点击外部
+// 关闭导出设置对话框（点击外部）
 document.getElementById('exportModal').addEventListener('click', (e) => {
-  if (e.target === e.currentTarget) closeModal();
+  if (e.target === e.currentTarget) closeExportDialog();
 });
 
 // ============================================================
@@ -5865,6 +6520,8 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMaxShifts();          // 每人每周班次上限的数值 + 开关（见 §4.8）
   loadContinuousScheduling(); // 连续排班偏好（勾选=连班，不勾选=分散）
   loadLocks();              // 已锁定的排班位置
+  loadStudentQuery();       // 学号列表搜索词（只在内存，见 §4.15 / §7.3）
+  loadExportSettings();     // 导出设置（分隔符，只在内存，见 §4.17）
   syncMaxShiftsInput();     // 数值框 + 开关 + 说明文案
   syncContinuousInput();
   renderStudentList();

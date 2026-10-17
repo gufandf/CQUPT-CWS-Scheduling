@@ -99,12 +99,12 @@ API 端点：
 
 | 函数 / 常量 | 作用 |
 | --- | --- |
-| `CONFIG` | 节次时间表、`maxPeriods=12`、忽略课程关键词 |
+| `CONFIG` | 节次时间表、`maxPeriods=12`（**已无「忽略课程关键词」**：课程忽略只有手动一种来源，见 §4.18） |
 | `LAYOUT_MODES` / `weekdayWeekendLayout()` | 两种分组模式的元信息、预设「工作日/周末」的分组定义 |
 | `getLayout()` / `getGroupForDay()` / `getGroupKeyByDay()` / `groupMeta()` | **分组访问器（唯一入口）**，见 §4.6 |
 | `getShiftsForDay()` / `getShiftById()` / `ungroupedDays()` | 按天取班次 / 按 id 取班次 / 未归组的天 |
 | `groupDaysText()` / `groupDaysBadge()` | 分组天数文案（连续天压成「周一至周五」；与分组名重复时徽标留空） |
-| `state` | 全局状态（学生、模板、单双周排班、忽略课程……） |
+| `state` | 全局状态（学生、模板、单双周排班、手动忽略课程……） |
 | `deriveConflictPeriods()` | 由班次起止时间推导冲突节次 |
 | `makeDefaultTemplate()` | 内置默认模板（与原硬编码配置逐项一致） |
 | `normalizeLayout()` / `normalizeTemplate()` | 分组定义规范化 / 模板规范化（补字段、丢非法项、兼容旧格式） |
@@ -116,11 +116,15 @@ API 端点：
 | `getMaxShiftsPerWeek()` / `maxShiftsLimit()` / `loadMaxShifts()` / `setMaxShiftsPerWeek()` / `setMaxShiftsEnabled()` / `syncMaxShiftsInput()` | 每人每周上限的读取、开关与界面同步（**不持久化**，见 §7.3）。**开关 `state.maxShiftsEnabled` 决定上限是否生效**（未勾选 = `Infinity`），数值 `0`/负数/非法回落默认值，见 §4.8 |
 | `openSidImport()` / `closeSidImport()` | 学号录入弹窗 `#sidImportModal` 的开关（入口是「文件」菜单 → 导入学号…）；`loadStudents()` 只读弹窗里的 `#sidInput` |
 | `renderStudentList()` / `updateStudentListItem()` / `_animatedSids` | 左侧学号列表的整列渲染 / **单条就地更新**，后者供刷新课表的逐条进度使用；`_animatedSids` 记录已播过入场动画的人，配合 `STAGGER_STEP_MS` / `STAGGER_MAX_MS` 逐条写 `--stagger-delay`，见 §4.13 第 4、5 条 |
+| `setStudentQuery()` / `clearStudentQuery()` / `filterStudentsByQuery()` / `normalizeStudentQuery()` / `studentMatchesQuery()` / `isStudentVisible()` / `loadStudentQuery()` | 学号列表搜索（**纯视图过滤**，按姓名 / 学号子串匹配），见 §4.15 |
+| `hoverScheduleStudent()` / `scrollStudentIntoView()` | 悬浮值班表班次标签时高亮 + 把左侧同学滚进可视区（只在不可见时才滚），见 §4.16 |
 | `isContinuousScheduling()` / `setContinuousScheduling()` / `loadContinuousScheduling()` | 「连续排班」开关的读写（**不持久化**，见 §7.3），见 §4.10 |
 | `makeContinuityContext()` / `continuityScoreOf()` / `continuityGainOf()` / `totalContinuityScore()` | 连续 / 分散判分（同一天连班 + 相邻天），见 §4.10 |
 | `optimizeContinuity()` | 保负载的「换人」局部搜索：勾选则尽量连续，不勾选则尽量分散，见 §4.10 |
 | `isLocked()` / `lockedSidsOf()` / `toggleLock()` | 排班锁定的判断与切换（锁「该同学+该班次」的位置），见 §4.9 |
+| `isStudentLocked()` / `toggleStudentLock()` / `keptSidsOf()` / `lockedStudentAssignments()` | **学生锁**：学号列表上锁「人」——自动排班对该同学不添加也不修改，见 §4.9.1 |
 | `normalizeLocks()` / `pruneLocks()` / `dropLocksOfStudent()` / `loadLocks()` / `persistLocks()` | 锁定数据的规范化、剪枝与清理（`load/persist` 已退化为默认值 / 空实现，见 §7.3） |
+| `normalizeStudentLocks()` / `pruneStudentLocks()` / `dropStudentLock()` | 学生锁的规范化、剪枝与清理（同样不持久化） |
 | `remapLockKeys()` | 随 `remapAssignmentIds()` 迁移锁定键（导入被清洗过的 id 时必需） |
 | `weeklyLoadOf()` / `totalLoadOf()` / `loadStats()` / `countEmptySlots()` | 负载统计工具 |
 | `canTakeShift()` | 课程冲突判断的唯一入口（显式传参，便于干跑推演） |
@@ -132,9 +136,11 @@ API 端点：
 | `renderTemplateEditor()` / `renderShiftCard()` | 模板编辑器 UI |
 | `tplSetMode()` / `tplAddGroup()` / `tplToggleDay()` / `tplExplodeToDays()` | 分组模式与结构编辑 |
 | `validateDraft()` / `templateWarnings()` / `saveTemplateEditor()` | 保存前校验（阻断）/ 提示（不阻断）/ 应用模板 |
-| `exportDutySchedule()` / `exportFreeSchedule()` / `exportData()` | 导出 |
+| `exportDutySchedule()` / `exportFreeSchedule()` / `exportData()` | 导出（前两者走 `joinNames()` 按所选分隔符拼接） |
+| `openExportDialog()` / `closeExportDialog()` / `confirmExportDialog()` / `syncExportDialog()` | 导出设置对话框的三个入口 + 界面同步，见 §4.17 |
+| `getExportSeparator()` / `exportSeparatorChar()` / `setExportSeparator()` / `joinNames()` / `loadExportSettings()` | 名字分隔符（`、` 或换行符）的读写与拼接，见 §4.17 |
 | `buildPersonSheet()` | 「人员表」工作表（按人聚合班次，随值班表导出），见 §4.11 |
-| `handleImportFile()` / `handleTemplateFileImport()` | 导入 |
+| `handleImportFile()` / `handleTemplateFileImport()` / `applyImportedTemplate()` | 导入数据 / 导入模板文件（后者**立即生效并自动打开模板编辑器**，见 §4.12） |
 | `MENU_IDS` / `openMenuId` / `setMenuOpen()` / `toggleMenu()` / `menuRun()` | 顶部菜单栏的一级菜单清单、展开状态与开合逻辑，见 §4.12 |
 | `refreshThemeMenuUi()` | 把当前主题同步到「个性化」菜单的对勾（**故意不叫 `syncThemeMenu()`**，理由见 §4.12） |
 | `openAbout()` / `closeAbout()` / `APP_VERSION` / `APP_BUILD_DATE` | 「关于 → 软件信息」弹窗，见 §4.12 |
@@ -259,7 +265,7 @@ API 端点：
 
 | 状态 | 持久化 | 含义 |
 | --- | --- | --- |
-| `state.maxShiftsEnabled` | **无**（只在内存，见 §7.3） | 左侧「限制每人每周班次」开关；**默认 `false`（不勾选）** |
+| `state.maxShiftsEnabled` | **无**（只在内存，见 §7.3） | 「编辑」菜单里的「限制每人每周班次」开关；**默认 `false`（不勾选）** |
 | `state.maxShiftsPerWeek` | **无**（只在内存，见 §7.3） | 上限数值，默认 `MAX_SHIFTS_DEFAULT = 3` |
 
 - `maxShiftsLimit()` 是**唯一**的上限口径：开关未勾选 → `Infinity`；勾选 → `getMaxShiftsPerWeek()`
@@ -311,7 +317,7 @@ API 端点：
 
 ### 4.10 连续 / 分散排班偏好（勾选式软偏好，绝不反噬均衡）
 
-左侧「连续排班」开关（`state.continuousShifts`，**只在内存，不持久化**，见 §7.3）：
+「编辑」菜单里的「连续排班」开关（`state.continuousShifts`，**只在内存，不持久化**，见 §7.3 / §4.12）：
 **勾选 = 尽量让同一人的班次连成片，不勾选（默认）= 尽量分散**。这是用户明确确认的口径。
 
 判分口径（「连续分」，越高越连续），全部落在 `continuityScoreOf(occ, ctx)`：
@@ -394,6 +400,52 @@ API 端点：
 测试见 `.selftest/test-integration.js` §41（含反复重排后锁定位置不变、
 均衡搜索跳过锁定、拖拽/移除被拦截、导入导出往返、剪枝与清理）。
 
+### 4.9.1 学生锁：学号列表上的锁定（锁「人」，不是锁「位置」）
+
+左侧学号列表的每一行也有一个锁按钮（`toggleStudentLock(sid)`），语义与 §4.9 的**位置锁完全不同**：
+
+| | 数据 | 锁的对象 | 自动排班的效果 |
+| --- | --- | --- | --- |
+| **位置锁**（§4.9） | `state.locks = { odd: { [key]: [sid,…] }, even: {} }` | 「该同学 + 该班次」这个格子 | 该格子不动；该同学在别处、别人进这个格子都照常 |
+| **学生锁**（本节） | `state.studentLocks = [sid, …]` | **这个人** | 对他**既不添加、也不修改**：现有班次全部冻结，也不再派新班次 |
+
+用户原话：「锁定的同学不再进行自动排班，即不添加也不修改其当前班次。」两套数据**互不干扰**，
+可以同时存在；JSON 里分别落在 `locks` 与 `studentLocks` 两个字段（`studentLocks` 为字符串数组，
+旧文件没有该字段 → `normalizeStudentLocks(undefined)` 视为无人被锁）。
+
+**实现要点：把「学生锁」翻译成一份排班快照**，而不是在算法的每个角落各判一次。
+
+`lockedStudentAssignments()` 在重建前扫一遍 `state.assignments`，取出被锁同学占用的每个槽位，
+交给 `initAssignments()` 回填 —— 效果等价于「自动地为他现有的每个位置都加了一把位置锁」。
+这样 `fillWeekGreedy` 拿到的 `kept` 里已经包含他，槽位内容不会被他处覆盖。
+
+五处必须守住的地方（漏任何一处都会静默破坏语义）：
+
+1. **`initAssignments()` 的快照必须在重建之前取。** 它会把 `state.assignments` 整个换掉，
+   之后再取快照就只剩空槽位了。回填时与位置锁**合并去重**（两套锁可能指向同一格）。
+2. **`keptSidsOf(key, wt, assignments, stuLockedSet)` 是「必须保留」的唯一口径**
+   （位置锁 ∪ 学生锁）。`fillWeekGreedy` 里原来直接用 `lockedSidsOf()` 的两处（计负载、取 kept）
+   都已换成它 —— 否则被锁同学的既有班次会在贪心阶段被 `= selected` 覆盖掉。
+3. **候选人池要排除被锁同学**（`if (stuLocked.has(sid)) continue;`），这就是「不添加」。
+4. **`optimizeBalance`：被锁同学既不能当 heavy 换出，也不能出现在 `eligible[key]` 里**（不能换进新槽位）。
+5. **`optimizeContinuity` 的两人互换同样进出都拦**（`candA` / `candB` 里都判 `stuLocked`，
+   `eligible` 集合也预先剔除）。
+
+配套：
+
+- **手工操作不拦**（用户明确选择「只约束自动排班」）：学号列表的锁定**不禁用**右侧标签的拖拽与 ×，
+  用户仍可手动调整。这与 §4.9 位置锁「拖走/移除要拦下」的态度相反，是**刻意的**，别「顺手统一」。
+- 清理时机：`dropStudentLock()` 在 `removeStudent()` 里调用；`clearAll()` / `resetSchedule()` 整体清空；
+  `pruneStudentLocks()` 挂在 `pruneInvalidAssignments()` 末尾（学生名单为空时**不判**「人是否还在」，
+  与 `pruneLocks()` 同理，否则刚打开页面就会把导入回来的锁清掉）。
+- 界面：条目加 `.locked` 类（琥珀色 + 左侧色条）并带 `data-locked="1"`，
+  锁图标复用 §4.9 的 `LOCK_ICON_CLOSED` / `LOCK_ICON_OPEN`。
+- 不持久化到浏览器存储（§7.3）：`loadLocks()` 同时把 `state.studentLocks` 置空。
+
+测试见 `.selftest/test-integration.js` §47：规范化与切换、渲染类名、**不添加**（无班次的人排完仍是 0 班）、
+**不修改**（`initAssignments` / `optimizeBalance` / `optimizeContinuity` 三个入口各自冻结）、
+端到端反复重排后班次集合逐位不变、快照只含被锁同学、清理路径、导入导出往返。
+
 ### 4.11 导出值班表附带「人员表」工作表（只在值班表里，空课表不加）
 
 用户要求「方便表中值班人员快速查看自己在何时有几班」，所以 `exportDutySchedule()` 在
@@ -437,15 +489,17 @@ API 端点：
 `totalLoadOf` 对照、陈旧键按 0 班计、明细排序与字段完整性、清空排班后名单仍在、
 无数据时的提示行、以及空课表不加人员表。
 
-### 4.12 顶部菜单栏：导入 / 导出 / 主题 / 指南的**唯一可见入口**
+### 4.12 顶部菜单栏：导入 / 导出 / 排班设置 / 主题 / 指南的**唯一可见入口**
 
-`<body>` 的第一个子元素是 `.top-menubar`，三个一级菜单 `#menuFile` / `#menuPersonal` / `#menuAbout`，
-二级菜单项放在各自的 `.menu-panel` 里。**用户要求把原来散落在左侧面板与表头的按钮全部收进这里**
-（原位置按钮已删除，不要「顺手」加回去）：
+`<body>` 的第一个子元素是 `.top-menubar`，**四个**一级菜单
+`#menuFile` / `#menuEdit` / `#menuPersonal` / `#menuAbout`（`MENU_IDS` 与 DOM 顺序一致，
+`←`/`→` 导航按这个顺序走），二级菜单项放在各自的 `.menu-panel` 里。
+**用户要求把原来散落在左侧面板与表头的按钮全部收进这里**（原位置按钮已删除，不要「顺手」加回去）：
 
 | 一级菜单 | 二级菜单项（顺序即 DOM 顺序） |
 | --- | --- |
-| **文件** | 导入学号…（`menuRun(openSidImport)`）、导入数据…、导入模板…、导出值班表、导出空课表、导出数据、导出值班模板、**编辑值班模板…**（`menuRun(openTemplateEditor)`）、**重置排班…**（`menuRun(resetSchedule)`）、清空学号与排班… |
+| **文件** | 导入学号…（`menuRun(openSidImport)`）、导入数据…、导入模板…、导出值班表、导出空课表、导出数据、导出值班模板、重置排班…（`menuRun(resetSchedule)`）、清空学号与排班… |
+| **编辑** | **编辑值班模板…**（`menuRun(openTemplateEditor)`）、**限制每人每周班次**（开关 + 数值框）、**连续排班**（开关） |
 | **个性化** | 深夜模式 / 日间模式 / 跟随系统（当前项打勾） |
 | **关于** | 使用指南 / 软件信息 |
 
@@ -454,14 +508,16 @@ API 端点：
 真正触发它的是弹窗底部的「导入」按钮。**别再把它接回 `loadStudents`**，那样会读一个已经不在
 左侧面板的 textarea。
 
-左侧面板只保留：学号列表、进度条、「限制每人每周班次」开关、连续排班开关、
-开始排班 / 刷新课表两个按钮（以及一组 `display:none` 的兼容控件）。
+左侧面板只保留：学号列表、进度条、开始排班 / 刷新课表两个按钮（以及一组 `display:none` 的兼容控件）。
+**两个排班开关（上限 / 连续排班）已整块搬进「编辑」菜单**，左侧面板里**不再有 `.opt-row`**——
+别为了「方便看到当前值」把开关复制回左侧（用户明确要求放到编辑栏下；搬家 ≠ 复制）。
 **左侧已无 `.panel-header`**（排班标题由菜单栏的 `.menu-brand` 承担），
 **表头 `.header-actions` 整块已删除**（原来在表头右侧的「值班模板 / 重置排班」按钮随之消失）——
 表头现在只剩视图切换与单双周切换，右上角和左下角都**没有**「重置排班」。
-**导入 / 导出 / 编辑模板 / 重置排班**类入口一律只在「文件」菜单里，原位置按钮均已移除。
+**导入 / 导出 / 重置排班**类入口只在「文件」菜单里，**模板编辑与两个开关**只在「编辑」菜单里，
+原位置按钮均已移除。
 
-五条必须守住的点：
+六条必须守住的点：
 
 1. **`menuRun(fn)` 必须先收起菜单再执行动作。** 顺序颠倒会让下拉面板浮在即将打开的弹窗之上
    （`.menu-panel` 的 z-index 高于 `.modal-overlay`），表现是「点了菜单项，弹窗被菜单挡住」。
@@ -472,12 +528,17 @@ API 端点：
 3. **菜单项与面板按钮的启用状态必须同步。** `updateButtons()` 里既设 `btnExportDuty` / `btnExportFree`，
    也设 `menuExportDuty` / `menuExportFree` 的 `disabled`。新增禁用逻辑时两处都要跟，否则会出现
    「菜单项灰着、隐藏兼容按钮却可点」的不一致。
-4. **切换主题只有「个性化」菜单一个入口**（深夜模式 / 日间模式 / 跟随系统，三选一、当前项打勾）。
+4. **「编辑」菜单里的两个开关不能走 `menuRun`。** `menuRun` 会先收起菜单，而开关**不打开任何弹窗**，
+   于是用户点一下只看到菜单消失、看不到勾选状态的变化。它们的 `onchange` 直接调
+   `setMaxShiftsEnabled(this.checked)` / `setContinuousScheduling(this.checked)`，
+   菜单保持展开（点菜单外 / 点另一个一级菜单仍照常收起，那条逻辑在文件末尾的 document click 处理里，
+   与 `menuRun` 无关）。给菜单加新控件时照此判断：**会弹窗 → 走 `menuRun`；只改状态 → 直接调**。
+5. **切换主题只有「个性化」菜单一个入口**（深夜模式 / 日间模式 / 跟随系统，三选一、当前项打勾）。
    历史上菜单栏右侧曾有一个循环切换的 `#themeToggle` 快捷按钮，**已按用户要求删除**，
    连带 `.theme-btn` 样式与 `toggleTheme()` / `updateThemeIcon()` 一起删掉了 ——
    不要再把它们加回来。菜单对勾由 `refreshThemeMenuUi()` 统一维护，**由 `applyTheme()` 直接调用**；
    因此改了主题就一定要走 `applyTheme()`，否则对勾不会更新（跟随系统时系统深浅色变化也走它）。
-5. **值班模板弹窗 `#templateModal` 故意不监听「点击外部关闭」**（用户要求防误触，见 §6.7）。
+6. **值班模板弹窗 `#templateModal` 故意不监听「点击外部关闭」**（用户要求防误触，见 §6.7）。
    模板里的每次改动都只写在草稿 `state.tplDraft` 上（深拷贝自 `state.template`），
    `closeTemplateEditor()` 会把草稿丢掉；
    如果点一下遮罩就关窗，用户刚改的整套模板会**无声作废**。
@@ -501,9 +562,27 @@ API 端点：
 三个字段由 `openAbout()` 动态填充（`APP_VERSION`、`APP_BUILD_DATE`、`window.location.origin`）。
 **发版时记得同时改 `APP_VERSION` 与 `APP_BUILD_DATE`。**
 
-测试见 `.selftest/test-integration.js` §45：三个一级菜单与各项接线、导出项的禁用同步、
+**「导入模板…」必须「立即生效 + 自动打开编辑器」**（曾是一个 bug，别改回去）：
+`handleTemplateFileImport()` 原来只把解析结果写进草稿 `state.tplDraft` 并弹一条 toast，
+**既没保存也没打开编辑器** —— 弹窗是 `display:none`，`renderTemplateEditor()` 写的 HTML
+用户根本看不到，界面就是「点了没反应」；而且草稿只活在内存里，用户下次打开编辑器时
+`openTemplateEditor()` 会用当前模板重新深拷贝，把刚导入的内容**静默覆盖**。
+现在统一走 `applyImportedTemplate(parsed)`：
+校验通过 → 直接写 `state.template` + `pruneInvalidAssignments()` + 打开编辑器（草稿换成新模板）；
+有**阻断性**错误 → 不直接生效（避免把坏模板套到现有排班上），只载入草稿并标红让用户修正。
+> 注意 `openTemplateEditor()` **不能**在这里复用：它会用 `state.template` 深拷贝覆盖掉刚导入的草稿。
+> 另外 `normalizeTemplate()` 会补齐空名称、丢弃时间非法的班次，因此能真正走到阻断分支的
+> 现实情况基本只有「某分组所有班次都被停用」——写测试时别拿空名称当反例，它不会红。
+
+测试见 `.selftest/test-integration.js` §45：四个一级菜单与各项接线、导出项的禁用同步、
 主题三态与对勾位置、`menuRun` 先收菜单再执行、`←`/`→`/`Esc` 键盘导航、菜单栏与左侧面板的
-z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以及提示条指向「文件」菜单。
+z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以及提示条指向「文件」菜单；
+**§48** 单独守「编辑」菜单：三项都在面板内、「编辑值班模板…」从「文件」菜单**只搬一次**、
+左侧面板不再有 `.opt-row`、两个开关未包 `menuRun`（点一下菜单不收起）、
+`syncMaxShiftsInput()` / `syncContinuousInput()` 在菜单里照常同步；
+**§49** 守本节这条导入修复：`applyImportedTemplate()` 立即写入 `state.template`、
+自动打开弹窗、编辑器正文与草稿都来自文件、阻断性错误时不套用但仍开编辑器
+（已用注入原 bug 的方式确认这一组断言真的会红 —— 10 条同时变红）。
 
 ### 4.13 界面动效是「纯 CSS 装饰层」，不得承载任何逻辑
 
@@ -591,7 +670,7 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 
 1. `#guideContent`（程序内「关于 → 使用指南」）
 2. `README.md`
-3. 左侧面板两个开关下的 `#maxShiftsHint` / `#continuousHint` 文案（由
+3. 「编辑」菜单两个开关下的 `#maxShiftsHint` / `#continuousHint` 文案（由
    `refreshMaxShiftsHint()` / `syncContinuousInput()` 动态写入）
 
 > 提醒用户「**数据不会自动保留、排完班要自己导出 JSON**」的那段提示必须留在使用指南里
@@ -604,6 +683,188 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 > 「关于」弹窗的数据存储行）只用一句「不自动保留（见注意事项/见上文）」带过即可。
 > 反复用「⚠ 重要」「一切归零」这类重语气会让人以为程序有缺陷，反而稀释了真正该注意的那条。
 
+### 4.15 学号列表搜索是「纯视图过滤」，绝不能改写 `state.students`
+
+左侧学号列表上方的搜索框（`#studentSearch`，`setStudentQuery()`）按**姓名或学号**做
+不区分大小写的子串匹配，口径与三条约束：
+
+1. **纯视图**：只影响左侧列表**显示什么**。`state.students` 一个元素都不增不减，
+   `runSchedule()` 的池子、`fetchAllSchedules()` 的请求范围、`export*` 的导出内容
+   一律继续用**完整名单**。搜索期间被隐藏的同学**照常参与排班、照常被抓课表、照常出现在导出里**。
+   > 用户原话确认过这一点：搜索是「找人」，不是「筛选数据」。
+   > 因此**不要**在 `runSchedule` / `fetchAllSchedules` / 导出里加 `studentQuery` 判断。
+2. **匹配口径**：`normalizeStudentQuery()` 去首尾空白并转小写；`studentMatchesQuery()`
+   对 `sid` 与 `name` 各做一次 `includes`，任一命中即显示。空查询词 = 全部显示。
+3. **过滤发生在排序之后**：先按班次数量降序排好 `sorted`，再 `filterStudentsByQuery(sorted)`，
+   所以筛选结果的相对顺序与不过滤时一致。
+
+四个必须守住的实现细节（前两条是这次踩过的坑）：
+
+1. **搜索框必须在 `#studentList` 外面。** `renderStudentList()` 每次都整段重写
+   `container.innerHTML`，输入框若放进列表里会被反复重建、**每次按键都丢焦点**
+   （与 §4.13 第 4 条同一类问题）。现在它是 `#studentList` 的兄弟节点。
+2. **`updateStudentListItem()` 必须区分「被过滤掉」与「真的不在 DOM」。**
+   它原先 `if (!node) return false`，而 `fetchAllSchedules()` 的 `.finally()` 把 `false`
+   当作「列坏了」去整列重渲染 —— 搜索状态下每抓回一张课表就会重写整列、列表反复闪烁。
+   现在的口径：节点找不到时，**若这个人在名单里、只是被搜索隐藏了 → 返回 `true`（什么都不做）**；
+   真不在名单里、或本该显示却不见了 → 返回 `false`。
+3. **过滤不能影响入场动画记账。** `newSids` / `_animatedSids` / 错峰延迟一律按
+   **完整名单**算，过滤只发生在最后的渲染映射上。否则「搜索一下」会让保留下来的条目
+   被误判成「新出现」而重放整列 `slideInFromLeft`（§4.13 第 4、5 条）。
+4. **无结果要给提示，不能一片空白**：渲染 `.student-empty` 行，回显查询词并说明总人数
+   （「没有匹配「zzz」的姓名或学号（共 6 人）」）；`#studentCount` 在搜索时同时给出
+   「共 N 人 · 筛出 M 人」，避免用户以为学号被删了。
+
+配套：搜索词存在 `state.studentQuery`，**不持久化**（§7.3，`loadStudentQuery()` 置空），
+`clearStudentQuery()` 与搜索框里的 × / Esc 等价；Esc 会 `stopPropagation()`，
+否则会继续冒到全局 Keydown 处理里顺手关掉弹窗。
+
+测试见 `.selftest/test-layout.js` §L25c：静态接线与 DOM 位置、姓名 / 学号 / 大小写 / 子串 /
+空白 / 多命中的匹配口径、无结果提示与计数文案、纯视图（不改 `state.students`）、
+清除按钮与 Esc、动画记账不被过滤干扰、`updateStudentListItem` 的两种「找不到」、
+以及搜索不影响 `runSchedule` / `fetchAllSchedules` 且不写入 localStorage。
+（已用注入 bug 的方式确认：让过滤失效会红 9 条，让搜索改写 `state.students` 会红 20 条。）
+
+### 4.16 悬浮体验：标签不位移、锁热区加大、悬浮班次时左列表定位
+
+三条已确认的用户要求，全都改在「观感 / 命中」层面，**不涉及任何排班逻辑**：
+
+1. **`.student-tag:hover` 不做位移与缩放。** 原先写的是
+   `transform: translateY(-2px) scale(1.03)`，鼠标划过一排标签时整排都在上下跳
+   （与 §4.13 第 2 条「`.shift-cell:hover` 不许 `scale`」是同一类问题）。
+   现在只保留 `box-shadow` / `filter` 这类**不改变几何**的反馈。
+   > 连带清掉了 `.student-tag.locked:hover { transform: none }` —— 它存在的唯一目的
+   > 就是抵消那个上移，主规则一删它就成了多余的重复声明。
+   > **拖拽相关动画要保留**：`.dragging` / `@keyframes dragPulse` / `.drop-available`
+   > 都是**落点反馈**，不属于「悬浮动效」，别顺手一起删。
+
+2. **锁按钮热区加大到 24×24**（`.student-tag .lock-btn`）。图标本身只有 10px，
+   原先的可点区就是那 10px，很难点中。
+   > **必须用负纵向 margin 抵消高度增长**：实测 24px 的盒子会把标签从 **26px 撑到 32px**，
+   > 整行随之变高、观感变化很明显。现在 `margin: -7px 2px -7px -4px`，
+   > 热区仍是 24×24、标签高度回到 26px（已在浏览器里用 `getBoundingClientRect` 实测）。
+   > 改这个尺寸时**一定要重新量标签与 `.shift-cell` 的高度**，别只看热区够不够大。
+
+3. **悬浮值班表里的班次时，左侧列表把该同学滚进可视区。**
+   入口是 `hoverScheduleStudent(sid, show)`（**值班表标签专用**），它先调
+   `highlightStudent()` 再调 `scrollStudentIntoView()`。
+   - **左侧列表项自己的 `mouseenter` 仍走 `highlightStudent()`，不滚动** ——
+     否则鼠标在列表边缘上下移动会把条目不停吸进视野，反而更晃。
+   - **只在目标「不在可视区」时才滚**（用户确认的口径）：按最近边手算最小滚动量，
+     已完整可见就一个像素都不动（实测划过一排班次不会让列表乱跳）。
+   - **滚动容器是 `#studentList` 本身**（它才是 `overflow-y:auto` 的那个），
+     改它的 `scrollTop` 而不是调 `scrollIntoView()`，避免连带滚动整页或其它容器；
+     结果再夹到 `[0, scrollHeight - clientHeight]`。
+   - 学生被搜索过滤掉时（§4.15）列表里没有该节点，传进来就是 `null`，安静返回。
+
+> **`harness.js` 为此新增了一个布局桩 `layoutStub`**：node 没有 CSS 引擎，
+> `getBoundingClientRect()` 默认返回全 0 矩形 —— 页面代码会判定「无布局信息 → 不动」，
+> 因此**既有断言完全不受影响**。要验证滚动数学的用例用
+> `layoutStub.setItemRect(sid, rect)` / `setBoxRect(rect)` 显式喂矩形，
+> 再调 `scrollStudentIntoView()` 并检查容器 `scrollTop`。
+> 但**「悬浮时到底还在不在动」「热区四角能不能点中」仍必须在真实浏览器里量**：
+> 前者靠 CSSOM（`document.styleSheets` 里的 `.student-tag:hover` 有没有 `transform`）
+> 加「悬浮前后 `getBoundingClientRect` 逐项相等」，后者靠 `document.elementFromPoint`
+> 在热区四角做命中测试（与 §6.7 同一手法）。
+
+测试见 `.selftest/test-layout.js` §L25d：CSSOM 层面的三条静态断言、滚动数学的
+「已可见 / 在上方 / 在下方 / 边界夹取 / null 与空矩形」五种情形、
+`hoverScheduleStudent` 的高亮与滚动、以及「左侧列表项自己不滚」。
+
+### 4.17 导出设置对话框（`#exportModal`）与名字分隔符
+
+「文件」菜单里的**「导出值班表…」/「导出空课表…」现在都先弹设置对话框**，
+选好设置再点「导出」才真正生成文件（取消 / × / Esc / 点遮罩都不导出）。
+
+> **这个弹窗原先是一具死壳子，别改回去。** DOM 里一直有 `#exportModal`，
+> 但**没有任何代码给它加 `.show`**，`closeModal()` / `copyModalContent()` **根本没定义**、
+> `downloadModalContent()` 是空函数。它带来的实际 bug 是：全局 Esc 处理末尾那句裸的
+> `closeModal()`，在**没有任何弹窗打开时按 Esc 会抛 `ReferenceError`**。
+> 现在弹窗被改造成设置对话框，并补上了 `closeExportDialog()`；
+> 全局 Esc 分支也改成了先判 `#exportModal` 有没有 `.show`。
+
+三条实现约束：
+
+1. **必须继续用 `id="exportModal"`，且位置不能动。** §6.7 的层叠前提是
+   「所有 `.modal-overlay` 都是 `<body>` 直接子元素、`#confirmModal` 排在 `#templateModal` 之前」，
+   `.selftest` §42 / §45 都对这个顺序做静态断言。**不要为了「名字更贴切」把它改名或搬家。**
+2. **分隔符只有两个合法值**：`'、'`（`EXPORT_SEP_DEFAULT`，默认）与 `'newline'`
+   （`EXPORT_SEP_NEWLINE`）。`getExportSeparator()` 对任何非法值一律回落顿号，
+   `exportSeparatorChar()` 把它翻译成实际字符（`'、'` 或 `'\n'`），
+   **所有拼接都必须走 `joinNames()`**，别再在导出里直接写 `join('、')`。
+   两个导出（值班表 / 空课表）共用同一个设置与同一个 `joinNames()`。
+3. **设置不持久化**（§7.3）：`loadExportSettings()` 一律回到顿号并清掉
+   `state.exportPending`（`'duty' | 'free' | null`，决定「导出」按钮执行哪个导出）。
+
+**关于换行符，有一个必须如实说明的技术限制**（已在浏览器 + LibreOffice 里实测）：
+本程序用的是 **SheetJS 社区版**，它**无法写入单元格样式**（`wrapText` 写不进去 ——
+生成的 `xl/styles.xml` 里既没有 `wrapText`，`cellStyles: true` 也不起作用）。
+换行符**本身会正确写进单元格**（SheetJS 会自动带 `xml:space="preserve"`，
+实测 LibreOffice 打开就是两行），但 **Excel 需要该格开启「自动换行」才显示为多行**。
+因此对话框里的提示文案写的是「Excel 里需该格开启『自动换行』才显示为多行
+（本程序使用的开源库社区版无法写入单元格样式）」——
+**不要把它简化成「已自动开启自动换行」，那是假的**（§50 有一条断言专门守这句话）。
+
+> 隐藏兼容按钮 `#btnExportDuty` / `#btnExportFree` 仍然接 `exportDutySchedule()` /
+> `exportFreeSchedule()`（**调用即导出，不经过对话框**），老脚本与 `.selftest/test-layout.js` §L23
+> 因此不受影响。菜单项才走 `openExportDialog`。
+
+测试见 `.selftest/test-integration.js` §50：DOM 顺序前提、两个单选项与默认勾选、
+分隔符的常量 / 规范化 / `joinNames` 三种输入、对话框开关与 `pending` 语义、
+**导出内容真的按所选分隔符拼接**（值班表与空课表各测两种）、取消不产生文件、
+隐藏兼容按钮仍直接导出、`closeModal()` 可安全调用（原先会抛错）、以及不写入 localStorage。
+（已用注入 bug 确认：让 `joinNames` 忽略分隔符会红 4 条，让菜单直接导出会红 1 条。）
+
+### 4.18 课程忽略**只有手动一种来源**（自动忽略已按用户要求删除）
+
+用户要求：**「删除课程自动忽略功能，仅允许手动忽略」**。因此：
+
+- `CONFIG.ignoreCourseKeywords`（`['实训','实习','实践','课程设计','毕业设计']`）**已整项删除**，
+  以及配套的「仅在 18 周及以后的课程自动忽略」规则也一并删除。
+  **不要再加回任何按课程名 / 周次 / 类型的自动忽略规则**，也不要新增类似的 `CONFIG` 字段。
+- `state.ignoredCourses`（`{ sid: Set<courseId> }`）是**唯一**的忽略来源，只有用户在课表弹窗里
+  点课程块（`toggleCourseIgnore()`）才会写入。**`course.ignored` 恒等于 `ignoredSet.has(courseId)`**，
+  绝不能再写成 `ignoredSet.has(id) ? !autoIgnored : autoIgnored` 这类与自动规则联动的表达式。
+- `parseCourses(data, sid)` 的 `skipAutoIgnore` 参数**已删除**（没有自动忽略可跳过）。
+  调用点只剩三个：`fetchAllSchedules` / `showStudentCourse` / `refreshSingleCourse`，外加导入路径。
+- `course.autoIgnored` 字段**已彻底删除**（不再是「留着没人读」）。`saveIgnoredCourses()`（空实现）
+  仍保留调用点（§7.3 的策略：`persist*/load*` 退化但不改调用点）。测试夹具里也**不要**再补
+  `autoIgnored: false`——`.selftest/` 的两个 `mkCourse` 已同步删掉该字段。
+
+**刷新课表绝不能清空手动忽略**（这是本次修复的核心，别再改回去）：原先三处刷新路径都有
+
+```js
+if (state.ignoredCourses[student.sid]) state.ignoredCourses[student.sid].clear();  // ❌ 已删除
+```
+
+配合「以本次自动忽略为准」重新赋值 `c.ignored`。删掉自动忽略后这段逻辑只剩破坏性：
+用户每点一次「刷新课表」/「刷新」，辛苦点出来的忽略就**全部白费**。
+现在三处（`fetchAllSchedules`、`showStudentCourse`、`refreshSingleCourse`）都**保留** `ignoredSet`，
+由 `parseCourses()` 按同一套 `courseId` 重新套用 —— `courseId` 由
+`class_id|course_num + 星期 + 起始节 + 起始周` 拼成，刷新前后稳定，因此忽略能正确延续。
+
+配套的两处界面变化：
+
+1. **课表弹窗右下角的「重新排班」按钮已删除**（用户要求）。忽略调整后不再从弹窗里直接重排，
+   排班统一由左侧「开始排班」按钮触发；弹窗底部只剩「关闭」。
+   忽略后仍照旧 `refreshView()` + `highlightAllConflicts()` 高亮冲突班次。
+2. **「重置忽略」改名为「清除忽略」**（`resetIgnoredCourses()` → `clearIgnoredCourses()`）：
+   语义从「清除手动标记后重新套用自动规则」变成纯粹的**清空该同学全部手动忽略**，
+   并把 `course.ignored` 一律置 `false`。函数名一并改了，别保留旧名做别名。
+
+`exportData()` 的 `ignoredCourses` 字段改以 `state.ignoredCourses` 这份手动集合为准
+（比「遍历当前课表筛 `c.ignored`」更稳：课表里暂时没有的课程也能被带出去）。
+`handleImportFile()` 里「补算自动忽略」那一整段**已删除**，文件里的 `ignoredCourses`
+在恢复 `ignoredSet` 后由 `parseCourses()` 自动套用。
+
+测试见 `.selftest/test-integration.js` §51（手动忽略语义）与 `.selftest/test-layout.js` §L28
+（界面接线）：`CONFIG` 无自动忽略字段、源码中不再出现 `autoIgnored` 赋值 / `ignoreCourseKeywords`、
+`parseCourses` 不再自动标记、**刷新课表后手动忽略仍在**、清除忽略的行为与文案、
+弹窗底部无「重新排班」按钮、以及导入导出往返。
+（已用注入 bug 确认：加回 `ignoreCourseKeywords` 会红 2 条；在 `refreshSingleCourse` 里
+恢复 `clear()` 会红 2 条；把「重新排班」按钮加回去会红 1 条 + §L28 红 3 条；
+让 `exportData()` 退回旧口径会红 2 条。）
+
 ---
 
 ## 5. 测试
@@ -611,16 +872,24 @@ z-index 大小关系、`#aboutModal` 不破坏 §6.7 的 DOM 顺序前提、以�
 `.selftest/` 是一个**不依赖浏览器**的 Node 自测套件（各文件项数以 `bash .selftest/run-all.sh` 末行输出为准，这里不写死具体数字）：
 
 ```
-harness.js              最小 DOM / localStorage 桩（localStorage 仍保留以断言「页面不用它」）/ XLSX 桩
+harness.js              最小 DOM / localStorage 桩（localStorage 仍保留以断言「页面不用它」）/ XLSX 桩 /
+                                布局桩 layoutStub（默认全 0 矩形＝无布局信息，见 §4.16）
 test-model.js           模板模型、键解析、冲突推导、不持久化（§7.3）
 test-integration.js     排班、剪枝、渲染、导出、导入往返、每人每周上限与均衡性、
                                 排班锁定（§41，锁「位置」而非「人」）、弹窗层叠断言（§42，见 §6.7）、
                                 连续 / 分散排班偏好（§43，见 §4.10）、
                                 连续分缓存与朴素实现等价（§43b，见 §4.10 / §5.1）、
-                                人员表（§44，见 §4.11）、顶部菜单栏（§45，见 §4.12）
+                                人员表（§44，见 §4.11）、顶部菜单栏（§45，见 §4.12）、
+                                导出设置对话框与名字分隔符（§50，见 §4.17）、
+                                学生锁（§47，锁「人」——自动排班不添加也不修改，见 §4.9.1）、
+                                「编辑」菜单（§48，见 §4.12）、
+                                导入模板文件立即生效并自动开编辑器（§49，见 §4.12）、
+                                手动忽略课程（§51，无自动忽略 + 刷新不清空忽略，见 §4.18）
 test-layout.js          排班日分组（预设/自定义、模式往返、动态渲染与导出、未排班时的表格、
                                 分组只排单周/双周）、学号列表入场动画（只播一次 + 逐条错峰 + 就地更新，
-                                §L25b，见 §4.13）
+                                §L25b，见 §4.13）、学号列表搜索（§L25c，纯视图过滤，见 §4.15）、
+                                悬浮体验（§L25d：无上移 / 锁热区 24×24 / 悬浮班次滚动定位，见 §4.16）、
+                                手动忽略课程的界面接线（§L28，见 §4.18）
 run-all.sh              入口
 ```
 
@@ -778,7 +1047,7 @@ git check-ignore -v .selftest/test-new.js   # 无输出 = 不会被忽略
 ### 6.7 弹窗层叠：确认框必须被单独抬高（曾导致班次删不掉）
 
 `index.html` 里 **7 个** `.modal-overlay`
-（DOM 顺序：`exportModal` → `courseModal` → `confirmModal` → **`sidImportModal`** → `guideModal`
+（DOM 顺序：`exportModal`（**导出设置对话框**，见 §4.17） → `courseModal` → `confirmModal` → **`sidImportModal`** → `guideModal`
 → `aboutModal` → `templateModal`）
 **都是 `<body>` 的直接子元素**，其中除 `#confirmModal` 外的 6 个共用同一条规则 `z-index: 9998`
 （`#confirmModal` 被单独抬到 9999，见下）。
@@ -844,12 +1113,14 @@ git check-ignore -v .selftest/test-new.js   # 无输出 = 不会被忽略
   "locks": {                      // 已锁定的排班位置（version 3 起；旧文件无此字段=全部未锁定）
     "odd":  { "odd_d0_wd0": ["2025210001"] },
     "even": {}
-  }
+  },
+  "studentLocks": ["2025210001"]  // 被锁定「人」的学号（见 §4.9.1；旧文件无此字段=无人被锁）
 }
 ```
 
 **兼容性**：`version: 2` 的旧文件（无 `template` 字段）仍可导入，沿用当前模板；
-无 `locks` 字段的旧文件按「全部未锁定」处理（`normalizeLocks(undefined)`）。
+无 `locks` 字段的旧文件按「全部未锁定」处理（`normalizeLocks(undefined)`），
+无 `studentLocks` 字段按「无人被锁」处理（`normalizeStudentLocks(undefined)`）。
 `handleImportFile()` 会用 `remapAssignmentIds(_idRemap)` 迁移被清洗过的班次 id，
 避免排班被误判失效而清除；**`remapLockKeys()` 会同步迁移锁定键**，否则锁定会被当失效数据丢弃。
 
@@ -905,7 +1176,7 @@ git check-ignore -v .selftest/test-new.js   # 无输出 = 不会被忽略
 | `shift_ignored_courses` | `saveIgnoredCourses()` 空实现；`loadIgnoredCourses()` 置空表 |
 | `shift_max_per_week` / `shift_max_enabled` | `persistMaxShifts()` 空实现；`loadMaxShifts()` 回落 `3` / `false` |
 | `shift_continuous` | `persistContinuousScheduling()` 空实现；`loadContinuousScheduling()` 回落 `false` |
-| `shift_locks` | `persistLocks()` 空实现；`loadLocks()` 置空锁定 |
+| `shift_locks` | `persistLocks()` 空实现；`loadLocks()` 置空锁定（含 §4.9.1 的学生锁） |
 | `theme` | `applyTheme()` 只改内存变量 `currentTheme`；`getTheme()` 读该变量 |
 
 四条约束（改代码前务必理解）：

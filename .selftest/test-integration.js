@@ -1,5 +1,5 @@
 // 集成测试：排班 / 剪枝 / 渲染 / 导出 / 导入 全链路
-const { g, ok, eq, section, summary, localStorage, el, document, writeFiles, rawHtml } = require('./harness.js');
+const { g, ok, eq, section, summary, localStorage, el, document, writeFiles, rawHtml, sandbox } = require('./harness.js');
 
 // ── 构造学生课表数据 ──
 const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
@@ -8,7 +8,7 @@ const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
   periods: Array.from({ length: period }, (_, i) => begin + i), weeks,
   oddWeeks: weeks.filter(w => w % 2 === 1), evenWeeks: weeks.filter(w => w % 2 === 0),
   hasOdd: weeks.some(w => w % 2 === 1), hasEven: weeks.some(w => w % 2 === 0),
-  isFullDay: period >= 8, ignored: !!ignored, autoIgnored: false,
+  isFullDay: period >= 8, ignored: !!ignored,
 });
 
 // ── 后续 then 之间共享的 helper（在 §32 起赋值） ──
@@ -1519,21 +1519,30 @@ Promise.resolve(run).then(() => {
   // 使用指南收进「关于」，并在「关于」下新增「软件信息」。
   // node 里没有布局引擎，这里做「入口存在 + 逻辑接线 + 层叠规则」的静态与行为断言；
   // 下拉面板能否真的点到，靠浏览器验证（与 §6.7 同类问题）。
-  section('45. 顶部菜单栏：文件 / 个性化 / 关于');
+  section('45. 顶部菜单栏：文件 / 编辑 / 个性化 / 关于');
 
   const menuHtml = rawHtml();
-  ['menuFile', 'menuPersonal', 'menuAbout'].forEach(id => {
+  ['menuFile', 'menuEdit', 'menuPersonal', 'menuAbout'].forEach(id => {
     ok(menuHtml.includes(`id="${id}"`), `存在一级菜单 ${id}`);
   });
+  // 「编辑」必须排在「文件」之后（DOM 顺序即显示顺序）
+  ok(menuHtml.indexOf('id="menuFile"') < menuHtml.indexOf('id="menuEdit"')
+     && menuHtml.indexOf('id="menuEdit"') < menuHtml.indexOf('id="menuPersonal"'),
+     '「编辑」菜单在 DOM 中排在「文件」与「个性化」之间');
   ok(menuHtml.includes('class="top-menubar"'), '顶部存在 .top-menubar 菜单栏');
 
-  // 「文件」二级菜单里的迁移项
+  // 「文件」二级菜单里的项
   // 注意：「导入学号」接的是 openSidImport（打开弹窗），不再直接接 loadStudents；
-  //       另外新增了「编辑值班模板…」「重置排班…」两项。
-  ['openSidImport', 'importData', 'exportDutySchedule', 'exportFreeSchedule',
-   'exportData', 'exportTemplateFile', 'openTemplateEditor', 'resetSchedule'].forEach(fn => {
-    ok(menuHtml.includes(`menuRun(${fn})`), `「文件」菜单接到 ${fn}`);
-  });
+  //       「编辑值班模板…」已迁到「编辑」菜单（见下方「编辑」菜单一节），不在这里断言；
+  //       两个「导出…」项现在接的是导出设置对话框 openExportDialog（见 §50）。
+  ['openSidImport', 'importData', 'exportData', 'exportTemplateFile', 'resetSchedule']
+    .forEach(fn => {
+      ok(menuHtml.includes(`menuRun(${fn})`), `「文件」菜单接到 ${fn}`);
+    });
+  ok(/menuRun\(function\(\)\{ openExportDialog\('duty'\); \}\)/.test(menuHtml),
+     '「导出值班表」先打开导出设置对话框（不再直接导出）');
+  ok(/menuRun\(function\(\)\{ openExportDialog\('free'\); \}\)/.test(menuHtml),
+     '「导出空课表」先打开导出设置对话框（不再直接导出）');
   ok(!menuHtml.includes('menuRun(loadStudents)'),
      '「文件」菜单不再直接接 loadStudents（改为先打开学号弹窗）');
   ok(/menuRun\(function\(\)\{ document\.getElementById\('tplFileInput'\)\.click\(\); \}\)/.test(menuHtml),
@@ -1591,7 +1600,7 @@ Promise.resolve(run).then(() => {
   ok(!menuHtml.includes('编辑值班模板也都在那里'),
      '源码里已删除左侧面板的「导入学号…（…也都在那里）」注释');
   ok(menuHtml.includes('id="maxShiftsToggle"') && menuHtml.includes('id="continuousToggle"'),
-     '删掉指引文案后，左侧两个开关（上限 / 连续排班）仍然存在');
+     '两个排班开关控件仍然存在（现在在「编辑」菜单里）');
   ok(menuHtml.includes('menuRun(openSidImport)'),
      '删掉指引文案后，「文件」菜单的「导入学号…」入口仍然存在');
 
@@ -1714,11 +1723,16 @@ Promise.resolve(run).then(() => {
   eq(g('openMenuId'), null, 'menuRun 执行动作前先收起了菜单（避免下拉面板浮在弹窗上）');
 
   // ←→ 键在一级菜单间切换；Esc 收起
+  // 一级菜单现在是 文件 / 编辑 / 个性化 / 关于（「编辑」排在「文件」之后，见 §4.12）
   g("setMenuOpen('menuFile', true)");
   g("onMenuBarKeydown({ key:'ArrowRight', preventDefault(){} })");
-  eq(g('openMenuId'), 'menuPersonal', '→ 切到下一个一级菜单');
+  eq(g('openMenuId'), 'menuEdit', '→ 从「文件」切到「编辑」');
+  g("onMenuBarKeydown({ key:'ArrowRight', preventDefault(){} })");
+  eq(g('openMenuId'), 'menuPersonal', '→ 再切到「个性化」');
   g("onMenuBarKeydown({ key:'ArrowLeft', preventDefault(){} })");
-  eq(g('openMenuId'), 'menuFile', '← 切回上一个一级菜单');
+  eq(g('openMenuId'), 'menuEdit', '← 切回上一个一级菜单');
+  g("onMenuBarKeydown({ key:'ArrowLeft', preventDefault(){} })");
+  eq(g('openMenuId'), 'menuFile', '← 继续切回「文件」');
   g("onMenuBarKeydown({ key:'Escape' })");
   eq(g('openMenuId'), null, 'Esc 收起菜单');
 
@@ -1794,7 +1808,722 @@ Promise.resolve(run).then(() => {
   eq(g('getTheme()'), 'auto', 'applyTheme("auto") 后回到跟随系统');
   eq(JSON.stringify(g('localStorage._dump()')), '{}', '主题切换同样不写入 localStorage');
 
-  summary();
+  // ── 47. 学生锁：学号列表上的锁定（锁「人」而非「位置」，见 AGENT.md §4.9.1） ──
+  // 语义（用户确认）：锁定后该同学**不参与自动排班** —— 既不把新班次加给他，
+  // 也不改动他现有的任何班次。与 §41 的位置锁是两套独立数据，互不干扰。
+  section('47. 学生锁：自动排班不添加也不修改被锁同学的班次');
+
+  const lockSrc = rawHtml();
+  ['toggleStudentLock', 'isStudentLocked', 'normalizeStudentLocks', 'pruneStudentLocks',
+   'dropStudentLock', 'lockedStudentAssignments', 'keptSidsOf'].forEach(fn => {
+    ok(lockSrc.includes(`function ${fn}`), `源码里定义了 ${fn}（学生锁的一部分）`);
+  });
+  ok(lockSrc.includes('id="studentList"') && lockSrc.includes('lock-btn'),
+     '学号列表渲染出锁按钮');
+  ok(/\.student-item\.locked\s*\{/.test(lockSrc), 'CSS 里有 .student-item.locked 样式');
+
+  // 规范化：外部来源一律过滤
+  eq(g('normalizeStudentLocks(undefined)'), [], 'normalizeStudentLocks(undefined) → 空数组（兼容旧文件）');
+  eq(g('normalizeStudentLocks(null)'), [], 'normalizeStudentLocks(null) → 空数组');
+  eq(g('normalizeStudentLocks(["A","A",1,"",null,"B"])'), ['A', 'B'], 'normalizeStudentLocks 去重并丢弃非字符串');
+
+  // 切换开关
+  g('state.students = [{sid:"A",name:"A",status:"ready",courses:[],rawCourses:[]}]; state.studentLocks = [];');
+  eq(g('isStudentLocked("A")'), false, '默认未锁定');
+  g('toggleStudentLock("A")');
+  eq(g('JSON.stringify(state.studentLocks)'), '["A"]', 'toggleStudentLock 把学号写进 state.studentLocks');
+  eq(g('isStudentLocked("A")'), true, '切换后 isStudentLocked 为 true');
+  // 渲染层：该条带 locked 类与闭合锁图标
+  g('renderStudentList()');
+  const listHtml = el('studentList').innerHTML;
+  ok(/class="student-item[^"]*\blocked\b/.test(listHtml), '锁定的学号条目带 locked 类');
+  ok(listHtml.includes('data-locked="1"'), '锁定的学号条目标记 data-locked="1"');
+  ok(listHtml.includes('lock-btn'), '学号条目渲染出 lock-btn');
+  g('toggleStudentLock("A")');
+  eq(g('JSON.stringify(state.studentLocks)'), '[]', '再次切换即解锁');
+  g('renderStudentList()');
+  ok(!/class="student-item[^"]*\blocked\b/.test(el('studentList').innerHTML),
+     '解锁后条目不再带 locked 类');
+
+  // ── 确定性用例 1：被锁同学不会被「添加」进任何班次 ──
+  g(`state.template = makeDefaultTemplate();
+     state.students = [
+       {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+       {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]},
+       {sid:'C',name:'C',status:'ready',courses:[],rawCourses:[]}
+     ];
+     state.locks = { odd:{}, even:{} };
+     state.studentLocks = ['A'];
+     state.assignments = { odd:{}, even:{} };
+     initAssignments();
+     fillWeekGreedy(state.assignments, state.students, ['A','B','C'], 'odd', Infinity);`);
+  eq(g(`weeklyLoadOf(state.assignments, 'odd', 'A')`), 0,
+     '被锁同学当前没有任何班次时，贪心一也不会给他添加（不添加）');
+  ok(g(`weeklyLoadOf(state.assignments, 'odd', 'B') + weeklyLoadOf(state.assignments, 'odd', 'C') > 0`),
+     '锁定个别人不影响其它同学照常排班');
+
+  // ── 确定性用例 2：被锁同学现有的班次原样冻结 ──
+  g(`state.assignments = { odd: { odd_d0_wd0:['A'], odd_d0_wd1:['A','B'] }, even: {} };
+     state.studentLocks = ['A'];
+     state.locks = { odd:{}, even:{} };
+     initAssignments();`);
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd0'])`), '["A"]',
+     'initAssignments 重建槽位后被锁同学的班次原样保留（不修改）');
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd1'])`), '["A"]',
+     '被锁同学与别人同处一个槽位：他被保留，未锁的 B 照旧被重建清空（锁的只是 A 这个人）');
+
+  // 均衡搜索：既不换出被锁同学，也不把他换到别处（不添加）
+  g(`state.students = [
+       {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+       {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]},
+       {sid:'C',name:'C',status:'ready',courses:[],rawCourses:[]}
+     ];
+     state.studentLocks = ['A'];
+     state.assignments = { odd: { odd_d0_wd0:['A'], odd_d0_wd1:['A'], odd_d0_wd2:['B'] }, even: {} };`);
+  g(`optimizeBalance(state.assignments, state.students, ['A','B','C'], Infinity)`);
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd0'])`), '["A"]',
+     'optimizeBalance 不把被锁同学换出（不修改）');
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd1'])`), '["A"]',
+     '被锁同学重负时也不调整他的任何一个班次');
+  ok(g(`!Object.keys(state.assignments.odd).some(k => k !== 'odd_d0_wd0' && k !== 'odd_d0_wd1' && state.assignments.odd[k].includes('A'))`),
+     'optimizeBalance 不会把被锁同学换进新槽位（不添加）');
+
+  // 连续 / 分散偏好用的是「两人互换」，同样要拦下被锁同学
+  g(`state.students = [
+       {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+       {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]}
+     ];
+     state.studentLocks = ['A'];
+     state.assignments = { odd: { odd_d0_wd0:['A'], odd_d0_wd2:['B'] }, even: {} };`);
+  g(`optimizeContinuity(state.assignments, state.students, ['A','B'])`);
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd0'])`), '["A"]',
+     'optimizeContinuity 不参与被锁同学的交换（位置不变）');
+  eq(g(`JSON.stringify(state.assignments.odd['odd_d0_wd2'])`), '["B"]',
+     '被锁同学不会被动换到别人槽位（不添加）');
+
+  // ── 端到端：整轮 runSchedule 反复重排，被锁同学的班次集合逐位不变 ──
+  const stuLockStudents = [];
+  for (let i = 0; i < 30; i++) {
+    stuLockStudents.push({ sid: '2025' + String(700000 + i), name: 'L' + i, status: 'ready',
+                           courses: [], rawCourses: [], nowWeek: 8 });
+  }
+  g(`state.students = ${JSON.stringify(stuLockStudents)}`);
+  g('state.template = makeDefaultTemplate(); state.locks = { odd:{}, even:{} }; state.studentLocks = [];');
+  g('state.currentWeek = "odd"; state.currentView = "duty";');
+  setMaxShifts(3);
+  setMaxEnabled(false);
+  g('initAssignments()');
+  return Promise.resolve(g(`(async () => {
+    await runSchedule();
+    // 挑一个已有班次的人锁定，记录他占用的全部槽位
+    const target = '2025700000';
+    const before = [];
+    for (const wt of ['odd', 'even'])
+      for (const key of Object.keys(state.assignments[wt]))
+        if (state.assignments[wt][key].includes(target)) before.push(key);
+    toggleStudentLock(target);
+    await runSchedule();
+    setMaxShiftsEnabled(true);
+    await runSchedule();
+    setMaxShiftsEnabled(false);
+    await runSchedule();
+    return JSON.stringify({ target, before: before.sort() });
+  })()`)).then((raw) => {
+    const { target, before } = JSON.parse(raw);
+    ok(before.length > 0, `被锁同学排班前已有 ${before.length} 个班次，可用来验证「不修改」`);
+
+    const after = JSON.parse(g(`(() => {
+      const out = [];
+      for (const wt of ['odd', 'even'])
+        for (const key of Object.keys(state.assignments[wt]))
+          if (state.assignments[wt][key].includes('${target}')) out.push(key);
+      return JSON.stringify(out.sort());
+    })()`));
+    eq(after, before, '反复重排（含上限开关切换）后被锁同学的班次集合逐位不变');
+
+    const filled = g(`(() => {
+      let n = 0;
+      for (const key in state.assignments.odd) if (state.assignments.odd[key].length > 0) n++;
+      return n;
+    })()`);
+    ok(filled > 10, `锁定个别人不影响整张表继续排班（${filled} 个槽位有人）`);
+
+    // 被锁同学照常计入负载，不会被当成「没排班」而被反复加派
+    ok(g(`weeklyLoadOf(state.assignments, 'odd', '${target}') >= 1`),
+       '被锁同学仍被计入负载统计（口径不失真）');
+
+    // 快照函数本身
+    const snap = JSON.parse(g('JSON.stringify(lockedStudentAssignments())'));
+    ok(Object.keys(snap.odd).length + Object.keys(snap.even).length > 0,
+       'lockedStudentAssignments 给出被锁同学当前占用的槽位快照');
+    const snapHasOnlyLocked = g(`(() => {
+      for (const wt of ['odd','even'])
+        for (const key of Object.keys(lockedStudentAssignments()[wt]))
+          for (const sid of lockedStudentAssignments()[wt][key])
+            if (!isStudentLocked(sid)) return false;
+      return true;
+    })()`);
+    eq(snapHasOnlyLocked, true, '快照里只包含被锁同学（不会把别人一起冻结）');
+    // 没有学生锁时快照为空（不影响原有行为）
+    g('state.studentLocks = []');
+    eq(g('JSON.stringify(lockedStudentAssignments())'), '{"odd":{},"even":{}}',
+       '没有学生锁时快照为空对象');
+  }).then(() => {
+    // ── 清理路径：移除同学 / 重置排班 / 清空 / 剪枝 ──
+    g(`state.students = [
+         {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+         {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[]}
+       ];
+       state.studentLocks = ['A','B'];`);
+    g(`dropStudentLock('A')`);
+    eq(g('JSON.stringify(state.studentLocks)'), '["B"]', 'dropStudentLock 只解除该同学的锁');
+
+    g(`state.studentLocks = ['A','B']; state.assignments = { odd:{ odd_d0_wd0:['A'] }, even:{} };`);
+    g(`removeStudent('A')`);
+    eq(g('JSON.stringify(state.studentLocks)'), '["B"]', '移除同学时其学生锁一并清除');
+
+    // 学生列表为空时不做「人是否还在」的判断（否则刚打开页面就会清掉导入的锁）
+    g(`state.studentLocks = ['A','B']; state.students = [];`);
+    eq(g('pruneStudentLocks()'), 0, '学生列表为空时不清理学生锁');
+    eq(g('JSON.stringify(state.studentLocks)'), '["A","B"]', '学生列表为空时锁完整保留');
+    g(`state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}];`);
+    eq(g('pruneStudentLocks()'), 1, '名单变化后剪掉已不在名单里的锁');
+    eq(g('JSON.stringify(state.studentLocks)'), '["A"]', '剪枝后只保留仍在名单里的锁');
+
+    // 重置排班：班次都没了，学生锁继续留着只会让该同学以后一个班都排不到
+    g(`state.studentLocks = ['A']; state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}];`);
+    g(`(function(){ const old = showConfirm; showConfirm = (t, m, fn) => fn(); try { resetSchedule(); } finally { showConfirm = old; } })()`);
+    eq(g('JSON.stringify(state.studentLocks)'), '[]', '重置排班后学生锁一并清空');
+
+    g(`state.studentLocks = ['A']; state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}]; state.assignments = { odd:{}, even:{} };`);
+    g(`(function(){ const old = showConfirm; showConfirm = (t, m, fn) => fn(); try { clearAll(); } finally { showConfirm = old; } })()`);
+    eq(g('JSON.stringify(state.studentLocks)'), '[]', '清空学号与排班后学生锁一并清空');
+  }).then(() => {
+    // ── 导入 / 导出往返 ──
+    g(`state.students = [{sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]}];
+       state.studentLocks = ['A'];`);
+    let exportedLocks = null;
+    const origBlob = sandbox.Blob;
+    sandbox.Blob = function (parts) { exportedLocks = JSON.parse(parts[0]); };
+    try { g('exportData()'); } finally { sandbox.Blob = origBlob; }
+    eq(exportedLocks.studentLocks, ['A'], '导出数据里带 studentLocks 字段');
+
+    eq(g('normalizeStudentLocks(undefined)'), [], '旧文件没有该字段 → 视为无人被锁');
+    g('state.studentLocks = normalizeStudentLocks(["B","B","A"])');
+    eq(g('JSON.stringify(state.studentLocks)'), '["B","A"]', '导入时按 normalizeStudentLocks 恢复并去重');
+
+    // loadLocks 同样把学生锁回到空（不持久化，见 §7.3）
+    g('state.studentLocks = ["A"]; loadLocks();');
+    eq(g('JSON.stringify(state.studentLocks)'), '[]', 'loadLocks 把学生锁回到空（不读存档）');
+
+    // ── 48. 顶部「编辑」菜单：模板编辑 + 两个排班偏好开关（见 AGENT.md §4.12） ──
+    // 用户要求新增「编辑」一级菜单，把「编辑值班模板」「限制每人每周班次」「连续排班」
+    // 三项收进它的二级菜单（从「文件」菜单与左侧面板**搬走**，不是复制）。
+    section('48. 顶部「编辑」菜单：模板编辑与两个排班开关');
+    const editHtml = rawHtml();
+
+    // 一级菜单存在，且 MENU_IDS 与 DOM 顺序一致
+    ok(editHtml.includes('id="menuEdit"'), '存在一级菜单 #menuEdit');
+    eq(g('JSON.stringify(MENU_IDS)'), '["menuFile","menuEdit","menuPersonal","menuAbout"]',
+       'MENU_IDS 含「编辑」且顺序与 DOM 一致（←→ 导航自动跟着走）');
+
+    // 「编辑值班模板…」已从「文件」菜单迁到这里，且**只出现一次**（不是两处都能点）
+    eq((editHtml.match(/menuRun\(openTemplateEditor\)/g) || []).length, 1,
+       'menuRun(openTemplateEditor) 全源码只出现一次（从「文件」菜单搬走，未重复保留）');
+    const iEdit = editHtml.indexOf('id="menuEdit"');
+    const iPersonal = editHtml.indexOf('id="menuPersonal"');
+    const editPanel = editHtml.slice(iEdit, iPersonal);
+    ok(editPanel.includes('menuRun(openTemplateEditor)'),
+       '「编辑值班模板…」在「编辑」菜单面板内');
+
+    // 两个开关控件都落在「编辑」菜单面板里（而不是左侧面板）
+    ok(editPanel.includes('id="maxShiftsToggle"'), '「限制每人每周班次」开关在「编辑」菜单面板内');
+    ok(editPanel.includes('id="maxShiftsInput"'), '上限数值框也在「编辑」菜单面板内');
+    ok(editPanel.includes('id="continuousToggle"'), '「连续排班」开关在「编辑」菜单面板内');
+    // 左侧面板里不再有它们：取 .left-panel 到 .right-panel 之间的片段来断言
+    const iLeft = editHtml.indexOf('class="left-panel"');
+    const iRight = editHtml.indexOf('class="right-panel"');
+    const leftPanel = editHtml.slice(iLeft, iRight);
+    ok(!leftPanel.includes('id="maxShiftsToggle"'), '左侧面板不再有上限开关');
+    ok(!leftPanel.includes('id="maxShiftsInput"'), '左侧面板不再有上限数值框');
+    ok(!leftPanel.includes('id="continuousToggle"'), '左侧面板不再有「连续排班」开关');
+    ok(!leftPanel.includes('class="opt-row"'),
+       '左侧面板里不再有 .opt-row（两个开关整块搬走，不是复制）');
+
+    // 开关必须**不**走 menuRun：开关没有弹窗，收起菜单会让用户看不到勾选变化
+    ok(/id="maxShiftsToggle"[^>]*onchange="setMaxShiftsEnabled\(this\.checked\)"/.test(editHtml),
+       '上限开关的 onchange 直接调 setMaxShiftsEnabled（未包 menuRun，菜单保持展开）');
+    ok(/id="continuousToggle"[^>]*onchange="setContinuousScheduling\(this\.checked\)"/.test(editHtml),
+       '连续排班开关的 onchange 直接调 setContinuousScheduling（未包 menuRun）');
+    ok(!/menuRun\(function\(\)\s*\{\s*setMaxShiftsEnabled/.test(editHtml),
+       '上限开关没有包在 menuRun 里（包了就会点一下立刻收起菜单）');
+    ok(!/menuRun\(function\(\)\s*\{\s*setContinuousScheduling/.test(editHtml),
+       '连续排班开关没有包在 menuRun 里');
+
+    // 面板加宽样式（里面放了开关 + 数值框），且它仍走 .menu-panel 的层叠
+    ok(editHtml.includes('menu-panel-wide'), '「编辑」面板用了 menu-panel-wide（比纯文字面板宽）');
+    ok(/\.menu-panel-wide\s*\{[^}]*min-width/.test(editHtml), 'CSS 里定义了 .menu-panel-wide 的 min-width');
+    ok(/\.menu-panel\s+\.menu-opt\s*\{/.test(editHtml),
+       'CSS 里把菜单内的 .opt-row 视觉并入 .menu-item 风格（去边框、hover 同色）');
+
+    // 行为：走一遍开关，菜单不被收起，且状态 / 控件 / 文案三处同步
+    g("setMenuOpen('menuEdit', true)");
+    eq(g('openMenuId'), 'menuEdit', '可以展开「编辑」菜单');
+    ok(el('menuEdit').classList.contains('open'), '「编辑」菜单加上 open 类');
+    g('setMaxShiftsEnabled(true)');
+    eq(g('openMenuId'), 'menuEdit', '点开关后「编辑」菜单仍保持展开（否则看不到勾选变化）');
+    eq(el('maxShiftsToggle').checked, true, '开关控件同步为已勾选');
+    eq(el('maxShiftsInput').disabled, false, '勾选后数值框可用');
+    ok(String(el('maxShiftsHint').textContent).includes('已限制'), '勾选后说明文案含「已限制」');
+    g('setMaxShiftsEnabled(false)');
+    eq(g('openMenuId'), 'menuEdit', '取消勾选后菜单同样保持展开');
+    eq(el('maxShiftsInput').disabled, true, '取消勾选后数值框重新置灰');
+    g('setContinuousScheduling(true); syncContinuousInput();');
+    eq(el('continuousToggle').checked, true, '连续排班开关在菜单里照常同步');
+    ok(String(el('continuousHint').textContent).includes('连成片'), '勾选后说明文案变为「连成片」');
+    g('setContinuousScheduling(false); syncContinuousInput();');
+    eq(g('openMenuId'), 'menuEdit', '连续排班开关的同步也不收起菜单');
+
+    // 「编辑值班模板…」仍然照 §4.12 第 1 条先收菜单再开弹窗
+    g("setMenuOpen('menuEdit', true)");
+    g('menuRun(openTemplateEditor)');
+    eq(g('openMenuId'), null, 'menuRun(openTemplateEditor) 先收起菜单再执行');
+    eq(el('templateModal').classList.contains('show'), true, '模板编辑器被打开');
+    g('closeTemplateEditor()');
+    eq(el('templateModal').classList.contains('show'), false, '关闭模板编辑器');
+
+    // 权限 / 禁用同步：上限开关的量同步函数不依赖左侧面板存在
+    g('syncMaxShiftsInput(); syncContinuousInput();');
+    ok(el('maxShiftsToggle') && el('continuousToggle'), '两个控件在菜单里仍可被同步函数取到');
+
+    // ── 49. 修复「文件 → 导入模板…」点了没反应（见 AGENT.md §4.12 末尾） ──
+    // 原实现：解析后只写草稿 state.tplDraft + 弹一条 toast「点击保存并应用生效」，
+    //   既不保存也不打开编辑器 → 弹窗是 display:none，renderTemplateEditor() 写的 HTML
+    //   用户根本看不到，界面「点了没反应」；而且草稿只活在内存里，
+    //   下次 openTemplateEditor() 会用当前模板重新深拷贝，把导入内容**静默覆盖**。
+    // 修复口径（用户确认）：导入即生效，并自动打开模板编辑器。
+    section('49. 导入模板文件：立即生效并自动打开编辑器');
+
+    // 造一份与默认模板明显不同的模板文件（单分组、单班次、自定义名称）
+    const tplFile = {
+      version: 2,
+      name: '导入测试模板',
+      mode: 'weekday',
+      layout: [{ key: 'weekday', name: '周一至周五', days: [0, 1, 2, 3, 4] },
+               { key: 'weekend', name: '周六至周日', days: [5, 6] }],
+      groups: {
+        weekday: [{ id: 'wd0', label: '测试早班', start: '08:00', end: '09:30',
+                    capacity: 3, weeks: 'all', conflictPeriods: [1], autoConflict: false, enabled: true }],
+        weekend: [{ id: 'we0', label: '测试周末班', start: '09:00', end: '10:30',
+                    capacity: 2, weeks: 'all', conflictPeriods: [1], autoConflict: false, enabled: true }],
+      },
+    };
+
+    // 先让页面处于「已有生效模板 + 已有排班」的状态，才能验证「导入是否真的生效」
+    g('state.template = makeDefaultTemplate();');
+    g(`state.students = [
+         {sid:'A',name:'A',status:'ready',courses:[],rawCourses:[]},
+         {sid:'B',name:'B',status:'ready',courses:[],rawCourses:[],nowWeek:8}
+       ];`);
+    g('state.locks = {odd:{},even:{}}; state.studentLocks = [];');
+    g('initAssignments();');
+    g(`state.assignments.odd['odd_d0_wd0'] = ['A'];`);
+    g('state.tplDraft = null;');
+    g(`document.getElementById('templateModal').classList.remove('show')`);
+
+    // 直接调核心函数（handleTemplateFileImport 的 FileReader 回调体），免去异步文件读取
+    const importRes = JSON.parse(g(`JSON.stringify(applyImportedTemplate(${JSON.stringify(tplFile)}))`));
+    eq(importRes.applied, true, '校验通过的模板文件被直接应用（applied === true）');
+    eq(importRes.name, '导入测试模板', '返回的模板名来自文件');
+    ok(importRes.dropped >= 0, '返回清掉的失效排班数量');
+
+    // ① 立即生效：state.template 已经是导入的模板
+    eq(g('state.template.name'), '导入测试模板', '导入后 state.template 立即变成文件里的模板');
+    eq(g('state.template.groups.weekday.length'), 1, '导入后生效模板的班次来自文件（默认模板是 6 个）');
+    eq(g(`state.template.groups.weekday[0].label`), '测试早班', '班次内容来自文件');
+
+    // ② 自动打开编辑器：弹窗真的处于 show 状态（这正是原 bug 的缺口）
+    eq(el('templateModal').classList.contains('show'), true,
+       '导入后模板编辑器自动打开（原先没有这一步，用户看不到任何变化）');
+    ok(String(el('tplBody').innerHTML).length > 0, '编辑器正文被渲染（不再是空白）');
+    ok(String(el('tplBody').innerHTML).includes('测试早班'), '编辑器里显示的是刚导入的班次');
+    ok(String(el('tplBody').innerHTML).includes('导入测试模板'), '编辑器里显示的是刚导入的模板名');
+
+    // ③ 草稿与生效模板一致，且「取消」按既有语义丢弃草稿（不影响已生效的模板）
+    eq(g('state.tplDraft.name'), '导入测试模板', '编辑器草稿就是刚导入的模板');
+    g('closeTemplateEditor()');
+    eq(el('templateModal').classList.contains('show'), false, '可以正常关闭编辑器');
+    eq(g('state.tplDraft'), null, '取消后草稿被丢弃（与既有草稿语义一致）');
+    eq(g('state.template.name'), '导入测试模板',
+       '取消不会回滚：导入已经生效（这是本次确认的口径）');
+
+    // ④ 旧 bug 的回归锁：导入后**不需要**用户再手动打开编辑器才能看到内容。
+    //    这里直接断言「applyImportedTemplate 自己就打开了弹窗」，而不是依赖 openTemplateEditor。
+    g('closeTemplateEditor()');
+    g(`document.getElementById('templateModal').classList.remove('show')`);
+    g(`applyImportedTemplate(${JSON.stringify(tplFile)})`);
+    eq(el('templateModal').classList.contains('show'), true,
+       '再次导入同样自动打开编辑器（不依赖用户手动点「编辑值班模板…」）');
+
+    // ⑤ 排班剪枝仍然照常执行（导入的模板里没有默认模板的其它班次）
+    const leftKeys = g(`(() => {
+      const out = [];
+      for (const wt of ['odd','even']) for (const k of Object.keys(state.assignments[wt])) out.push(k);
+      return out.length;
+    })()`);
+    ok(leftKeys > 0, `导入后按新模板重建/剪枝了槽位（现有 ${leftKeys} 个）`);
+    ok(!g(`Object.keys(state.assignments.odd).includes('odd_d0_wd1')`),
+       '默认模板里、导入模板中不存在的班次槽位已被清掉');
+
+    // ⑥ 有阻断性错误的模板：不当场生效，但仍打开编辑器让用户修正
+    g('closeTemplateEditor()');
+    g('state.template = makeDefaultTemplate();');
+    // 说明：normalizeTemplate() 会补齐空模板名、丢弃时间非法的班次，所以能真正走到
+    // validateDraft 阻断分支的、唯一的现实情况是「某分组所有班次都被停用」。
+    const badTpl = JSON.parse(JSON.stringify(tplFile));
+    badTpl.groups.weekday.forEach(s => { s.enabled = false; });
+    const badRes = JSON.parse(g(`JSON.stringify(applyImportedTemplate(${JSON.stringify(badTpl)}))`));
+    eq(badRes.applied, false, '有阻断性错误时不当场生效（避免把坏模板套到现有排班上）');
+    ok(badRes.errors.length > 0, '返回了错误列表', badRes.errors);
+    eq(g('state.template.name'), '默认模板', '坏模板没有覆盖现有生效模板');
+    ok(badRes.errors.some(msg => msg.includes('停用')),
+       '错误列表里给出了「所有班次都被停用」的具体原因', badRes.errors);
+    eq(el('templateModal').classList.contains('show'), true, '坏模板也会打开编辑器让用户修正');
+    ok(String(el('tplBody').innerHTML).includes('停用'), '编辑器正文里标出了这条错误');
+    g('closeTemplateEditor()');
+
+    // ⑦ 静态断言：源码里不再保留「不会自动打开编辑器」那套说法
+    ok(!rawHtml().includes('不会自动打开编辑器'),
+       '源码里已删除「不会自动打开编辑器」（与新的自动打开行为矛盾）');
+    ok(rawHtml().includes('function applyImportedTemplate'),
+       '新增 applyImportedTemplate() 作为可测的核心入口');
+    ok(/applyImportedTemplate\(parsed\)/.test(rawHtml()),
+       'handleTemplateFileImport 走 applyImportedTemplate(parsed)');
+    ok(/state\.template = draft/.test(rawHtml()),
+       'applyImportedTemplate 会直接写入 state.template（导入即生效）');
+
+    // ── 50. 导出设置对话框 + 名字分隔符（见 AGENT.md §4.17） ──
+    // 需求：导出时先弹一个对话框完成导出设置，目前只有「名字分隔符」（、或换行符）。
+    // 顺带修掉一个潜在崩溃：原 #exportModal 是死壳子，closeModal() 从未定义，
+    // 而全局 Esc 处理末尾会裸调它 —— 没有任何弹窗时按 Esc 就抛 ReferenceError。
+    section('50. 导出设置对话框与名字分隔符');
+
+    const expHtml = rawHtml();
+    ok(expHtml.includes('id="exportModal"'), '导出设置对话框仍用 #exportModal（不破坏 §6.7 的 DOM 顺序前提）');
+    ok(expHtml.indexOf('id="exportModal"') < expHtml.indexOf('id="confirmModal"'),
+       '#exportModal 仍排在 #confirmModal 之前（§42 的层叠前提不变）');
+    ok(expHtml.includes('id="exportSepDun"') && expHtml.includes('id="exportSepNewline"'),
+       '对话框里有「顿号 / 换行符」两个单选项');
+    ok(expHtml.includes('id="exportDialogConfirm"'), '对话框有「导出」按钮');
+    ok(expHtml.includes('openExportDialog') && expHtml.includes('closeExportDialog')
+       && expHtml.includes('confirmExportDialog'), '导出流程的三个入口函数都在源码里');
+    ok(g('typeof closeModal') === 'function', 'closeModal() 已定义（原先不存在，Esc 会抛 ReferenceError）');
+    ok(g('typeof closeExportDialog') === 'function', 'closeExportDialog() 已定义');
+    ok(g('typeof copyModalContent') !== 'function',
+       '已删除没人接线的 copyModalContent 空壳（原弹窗的「复制」按钮）');
+
+    // 常量与默认值
+    eq(g('EXPORT_SEP_DEFAULT'), '、', '默认分隔符是顿号');
+    eq(g('EXPORT_SEP_NEWLINE'), 'newline', '换行符用 "newline" 常量表示');
+    g('loadExportSettings()');
+    eq(g('state.exportSeparator'), '、', 'loadExportSettings 回落默认顿号（不持久化）');
+    eq(g('state.exportPending'), null, 'loadExportSettings 清掉待执行的导出动作');
+
+    // 规范化：非法值一律回落顿号
+    g('setExportSeparator("随便什么")');
+    eq(g('state.exportSeparator'), '、', '非法分隔符回落为顿号');
+    eq(g('exportSeparatorChar()'), '、', '非法值时实际字符是顿号');
+    g('setExportSeparator("newline")');
+    eq(g('state.exportSeparator'), 'newline', '切到换行符');
+    eq(g('exportSeparatorChar()'), '\n', '换行符时实际字符是 \\n');
+    g('setExportSeparator("、")');
+    eq(g('state.exportSeparator'), '、', '切回顿号');
+
+    // joinNames 按当前分隔符拼接
+    g('setExportSeparator("、")');
+    eq(g('joinNames(["张三","李四"])'), '张三、李四', '顿号拼接');
+    g('setExportSeparator("newline")');
+    eq(g('joinNames(["张三","李四"])'), '张三\n李四', '换行符拼接');
+    eq(g('joinNames([])'), '', '空数组拼成空串');
+    eq(g('joinNames(["独苗"])'), '独苗', '单人时没有分隔符');
+    eq(g('joinNames(undefined)'), '', 'undefined 安全');
+
+    // 对话框开关：openExportDialog 打开并把设置同步进控件
+    g('loadExportSettings()');
+    g("document.getElementById('exportModal').classList.remove('show')");
+    g("openExportDialog('duty')");
+    eq(el('exportModal').classList.contains('show'), true, 'openExportDialog 打开对话框');
+    eq(g('state.exportPending'), 'duty', 'pending 记为 duty');
+    eq(el('exportSepDun').checked, true, '默认勾选顿号');
+    eq(el('exportSepNewline').checked, false, '换行符未勾选');
+    ok(String(el('exportDialogDesc').textContent).includes('值班表'), '说明文案指向值班表');
+    g("setExportSeparator('newline')");
+    eq(el('exportSepNewline').checked, true, '切到换行符后该单选框被勾选');
+    eq(el('exportSepDun').checked, false, '顿号单选框取消勾选');
+    ok(String(el('exportDialogHint').textContent).includes('换行'), '提示文案说明换行符行为');
+    // 诚实性：社区版写不了单元格样式，文案不能声称「已自动开启自动换行」
+    ok(!String(el('exportDialogHint').textContent).includes('已自动为该工作表开启'),
+       '【实测】提示文案不谎称「已自动开启自动换行」（社区版写不了样式）');
+    ok(!/已自动开启自动换行/.test(expHtml), '源码里没有「已自动开启自动换行」这种不实说法');
+
+    g("closeExportDialog()");
+    eq(g('state.exportPending'), null, 'closeExportDialog 清掉 pending');
+    eq(el('exportModal').classList.contains('show'), false, 'closeExportDialog 关掉对话框');
+    g("openExportDialog('free')");
+    ok(String(el('exportDialogDesc').textContent).includes('空课表'), '空课表时说明文案指向空课表');
+
+    // confirmExportDialog：按 pending 执行对应导出，并先关框
+    g(`state.students = [{sid:'2025210001',name:'张三',status:'ready',courses:[],rawCourses:[],nowWeek:8},
+                         {sid:'2025210002',name:'李四',status:'ready',courses:[],rawCourses:[],nowWeek:8}];`);
+    g('state.template = makeDefaultTemplate();');
+    g('state.locks = {odd:{},even:{}}; state.studentLocks = [];');
+    g('initAssignments();');
+    g(`state.assignments.odd['odd_d0_wd0'] = ['2025210001','2025210002'];`);
+
+    g('setExportSeparator("、")');
+    writeFiles.length = 0;
+    g("openExportDialog('duty'); confirmExportDialog();");
+    eq(el('exportModal').classList.contains('show'), false, '点「导出」后对话框自动关闭');
+    eq(writeFiles.length, 1, '点「导出」真的生成了一次文件');
+    {
+      const rows = writeFiles[0].wb.Sheets['单周值班表'].rows;
+      const cell = rows.map(r => r.join('|')).find(r => r.includes('张三'));
+      ok(cell && cell.includes('张三、李四'), '顿号：导出单元格里是「张三、李四」', cell && cell.slice(0, 60));
+    }
+
+    g('setExportSeparator("newline")');
+    writeFiles.length = 0;
+    g("openExportDialog('duty'); confirmExportDialog();");
+    {
+      const rows = writeFiles[0].wb.Sheets['单周值班表'].rows;
+      const cell = rows.map(r => r.join('|')).find(r => r.includes('张三'));
+      ok(cell && cell.includes('张三\n李四'), '换行符：导出单元格里是「张三\\n李四」', cell && JSON.stringify(cell.slice(0, 30)));
+      ok(cell && !cell.includes('张三、李四'), '换行符时不再出现顿号');
+    }
+
+    // 空课表也走同一个分隔符
+    g('setExportSeparator("newline")');
+    writeFiles.length = 0;
+    g("openExportDialog('free'); confirmExportDialog();");
+    eq(writeFiles[0].wb.SheetNames, ['单周空课表', '双周空课表'], '导出空课表：仍是两个工作表');
+    {
+      const rows = writeFiles[0].wb.Sheets['单周空课表'].rows;
+      const flat = rows.map(r => r.join('|')).join('\n');
+      ok(flat.includes('张三\n李四') || flat.includes('李四\n张三'), '空课表同样使用所选分隔符（换行符）');
+    }
+    g('setExportSeparator("、")');
+    writeFiles.length = 0;
+    g("openExportDialog('free'); confirmExportDialog();");
+    {
+      const rows = writeFiles[0].wb.Sheets['单周空课表'].rows;
+      const flat = rows.map(r => r.join('|')).join('\n');
+      ok(flat.includes('张三、李四') || flat.includes('李四、张三'), '空课表切回顿号后按顿号拼接');
+    }
+
+    // 取消不产生文件
+    g('setExportSeparator("、")');
+    writeFiles.length = 0;
+    g("openExportDialog('duty'); closeExportDialog();");
+    eq(writeFiles.length, 0, '打开后点「取消」不会导出任何文件');
+
+    // 隐藏兼容按钮仍按「调用即导出」工作（老脚本不看对话框）
+    writeFiles.length = 0;
+    g('exportDutySchedule()');
+    eq(writeFiles.length, 1, '隐藏兼容按钮走的 exportDutySchedule() 仍直接导出');
+    writeFiles.length = 0;
+    g('exportFreeSchedule()');
+    eq(writeFiles.length, 1, '隐藏兼容按钮走的 exportFreeSchedule() 仍直接导出');
+
+    // 全局 Esc：没有弹窗时不能再抛错（原先是裸调未定义的 closeModal）
+    ok(/if \(document\.getElementById\('exportModal'\)\.classList\.contains\('show'\)\)/.test(expHtml),
+       '全局 Esc 处理里对导出对话框加了 show 判断（不再裸调 closeModal）');
+    let closeThrew = null;
+    try { g('closeModal()'); } catch (e) { closeThrew = e.message; }
+    eq(closeThrew, null, 'closeModal() 可安全调用（原先 ReferenceError）');
+
+    // 不持久化（§7.3）
+    g('setExportSeparator("newline")');
+    g('loadExportSettings()');
+    eq(g('state.exportSeparator'), '、', '导出设置不持久化，回到默认顿号');
+    eq(JSON.stringify(g('localStorage._dump()')), '{}', '导出设置不写入 localStorage');
+
+    // ── 51. 课程忽略只有手动一种来源（自动忽略已按用户要求删除，见 AGENT.md §4.18） ──
+    // 用户要求：删除课程自动忽略功能，仅允许手动忽略。
+    // 因此 CONFIG.ignoreCourseKeywords、18 周及以后规则、parseCourses 的 skipAutoIgnore
+    // 参数、course.autoIgnored 字段全部必须消失；并且**刷新课表绝不能清空手动忽略**。
+    section('51. 课程忽略只有手动一种来源（无自动忽略）');
+    const igSrc = rawHtml();
+    // 同样先剥注释，避免说明文字造成误判
+    const igSrcNoComment = igSrc
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+    ok(!/ignoreCourseKeywords/.test(igSrcNoComment),
+       '源码中不再出现 ignoreCourseKeywords（自动忽略关键词已删除）');
+    ok(!/autoIgnored/.test(igSrcNoComment),
+       '源码中不再出现 autoIgnored 字段（自动忽略标记已删除）');
+    ok(!/skipAutoIgnore/.test(igSrcNoComment),
+       'parseCourses 不再有 skipAutoIgnore 参数');
+    ok(/function parseCourses\(data, sid\)/.test(igSrcNoComment),
+       'parseCourses 只剩 (data, sid) 两个参数');
+    ok(!/resetIgnoredCourses/.test(igSrcNoComment),
+       '旧的 resetIgnoredCourses 已改名，不再残留');
+    ok(/function clearIgnoredCourses\(\)/.test(igSrcNoComment),
+       '「清除忽略」由 clearIgnoredCourses() 承担');
+    ok(!/state\.ignoredCourses\[student\.sid\]\.clear\(\)/.test(igSrcNoComment),
+       '刷新课表路径不再清空手动忽略标记（会被 parseCourses 重新套用）');
+    ok(/const manualSet = state\.ignoredCourses\[s\.sid\]/.test(igSrcNoComment),
+       '导出数据以「手动忽略集合」为准');
+
+    // CONFIG 上确实没有这个字段了（行为断言，不只是字符串）
+    eq(g('typeof CONFIG.ignoreCourseKeywords'), 'undefined', 'CONFIG 上已无 ignoreCourseKeywords');
+
+    // 课表弹窗底部：没有「重新排班」按钮（注释里提到不算），按钮接 clearIgnoredCourses
+    const modalHtml = igSrc
+      .slice(igSrc.indexOf('id="courseModal"'), igSrc.indexOf('id="confirmModal"'))
+      .replace(/<!--[\s\S]*?-->/g, '');
+    ok(!/重新排班/.test(modalHtml), '课表弹窗里不再有「重新排班」按钮');
+    ok(modalHtml.includes('clearIgnoredCourses()'), '课表弹窗的「清除忽略」接 clearIgnoredCourses()');
+    ok(modalHtml.includes('清除忽略'), '按钮文案为「清除忽略」');
+
+    // ── 行为：parseCourses 绝不自动忽略（哪怕课程名含「实训」、周次全在 18 周后）──
+    const igRaw = [
+      { course: '实训A', class_id: 'C1', hash_day: 0, begin_lesson: 3, period: 2, week: [1, 2, 3],
+        course_num: 'C1', teacher: 'T', type: '必修', classroom: '101', rawWeek: '1-3周' },
+      { course: '高数', class_id: 'C2', hash_day: 2, begin_lesson: 3, period: 2, week: [1, 2, 3],
+        course_num: 'C2', teacher: 'T', type: '必修', classroom: '102', rawWeek: '1-3周' },
+      { course: '实践B', class_id: 'C3', hash_day: 1, begin_lesson: 1, period: 2, week: [18, 19],
+        course_num: 'C3', teacher: 'T', type: '必修', classroom: '103', rawWeek: '18-19周' },
+    ];
+    g('state.ignoredCourses = {};');
+    g(`state._igRaw = ${JSON.stringify(igRaw)};`);
+    eq(g('JSON.stringify(parseCourses(state._igRaw, "2025210001").map(c => c.ignored))'),
+       '[false,false,false]',
+       '关键词课「实训A」与 18 周后的「实践B」都不再被自动忽略');
+    ok(g('JSON.stringify(parseCourses(state._igRaw, "2025210001")[0])').indexOf('autoIgnored') === -1,
+       '解析出的课程对象上已无 autoIgnored 字段');
+
+    // 建一个学生，走真实的手动忽略入口
+    g('state.students = [{ sid:"2025210001", name:"张三", status:"ready",'
+      + ' courses: parseCourses(state._igRaw, "2025210001"), rawCourses: state._igRaw }];');
+    g('state.currentCourseModalSid = "2025210001";');
+    const igId0 = g('state.students[0].courses[0].courseId');
+    const igId1 = g('state.students[0].courses[1].courseId');   // 高数：周三第 3-4 节
+
+    // 未忽略时，高数与早班（冲突节次 3,4）冲突
+    eq(g('hasConflict(state.students[0].courses, 3, [3,4], "odd")'), true,
+       '未忽略时「高数」与早班冲突');
+
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId1)})`);
+    eq(g('JSON.stringify([...state.ignoredCourses["2025210001"]])'), JSON.stringify([igId1]),
+       '手动点击后课程 ID 进入忽略集合');
+    eq(g('state.students[0].courses[1].ignored'), true, '手动忽略后该课程 ignored=true');
+    eq(g('hasConflict(state.students[0].courses, 3, [3,4], "odd")'), false,
+       '手动忽略后该时段不再算冲突');
+
+    // 再点一次 = 取消忽略
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId1)})`);
+    eq(g('state.students[0].courses[1].ignored'), false, '再点一次取消忽略');
+    eq(g('JSON.stringify([...state.ignoredCourses["2025210001"]])'), '[]', '取消后集合为空');
+
+    // ── 关键回归：刷新课表后手动忽略必须保留（原先会被 clear() 抹掉）──
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId0)});`);
+    g(`toggleCourseIgnore('2025210001', ${JSON.stringify(igId1)});`);
+    eq(g('JSON.stringify(parseCourses(state._igRaw, "2025210001").map(c => c.ignored))'),
+       '[true,true,false]',
+       '重新解析课表（等同刷新课表）后，两门手动忽略的课仍然被忽略');
+
+    // 上面那条只覆盖了 parseCourses。这里再走一遍**真实的刷新课表路径**
+    // （refreshSingleCourse → fetchStudentSchedule），把「刷新会清空忽略」这个
+    // 原始 bug 真正钉死 —— 注入 clear() 时这条必须变红。
+    let refreshResult = null;
+    sandbox.fetch = () => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sid: '2025210001', name: '张三', nowWeek: 8, courses: igRaw,
+      }),
+    });
+    refreshResult = g(`(async () => {
+      await refreshSingleCourse();
+      return state.students[0].courses.map(c => c.ignored);
+    })()`);
+    return Promise.resolve(refreshResult).then(refreshedIgnored => {
+      eq(JSON.stringify(refreshedIgnored), '[true,true,false]',
+         '走真实 refreshSingleCourse() 刷新后，两门手动忽略的课依然被忽略（不清空）');
+      eq(JSON.stringify([...g('state.ignoredCourses["2025210001"]')]),
+         JSON.stringify([igId0, igId1]),
+         '刷新后 ignoredCourses 集合本身也没有被清空');
+      ok(String(el('courseModalTitle').textContent).includes('张三'),
+         'refreshSingleCourse 正常更新了课表弹窗标题（确认这条路径真的跑通了）');
+
+      // ── 清除忽略：一次取消该同学的全部手动忽略 ──
+      g('clearIgnoredCourses()');
+      eq(g('JSON.stringify([...state.ignoredCourses["2025210001"]])'), '[]',
+         '清除忽略后该同学的忽略集合为空');
+      eq(g('JSON.stringify(state.students[0].courses.map(c => c.ignored))'), '[false,false,false]',
+         '清除忽略后所有课程的 ignored 归 false');
+
+      // ── 导入往返：文件里的 ignoredCourses 恢复后由 parseCourses 直接套用 ──
+      g(`(function(){
+        const file = { students: [{ sid:'2025210001', name:'张三', rawCourses: state._igRaw,
+                                    ignoredCourses: [${JSON.stringify(igId1)}] }] };
+        file.students.forEach(s => {
+          if (s.ignoredCourses && s.ignoredCourses.length > 0) {
+            state.ignoredCourses[s.sid] = new Set(s.ignoredCourses);
+          }
+        });
+        state.students = file.students.map(s => {
+          const st = { sid: s.sid, name: s.name, status: 'pending', courses: null, rawCourses: null };
+          if (s.rawCourses && s.rawCourses.length > 0) {
+            st.rawCourses = s.rawCourses;
+            st.courses = parseCourses(s.rawCourses, s.sid);
+            st.status = 'ready';
+          }
+          return st;
+        });
+      })()`);
+      eq(g('JSON.stringify(state.students[0].courses.map(c => c.ignored))'), '[false,true,false]',
+         '导入文件里的手动忽略被 parseCourses 套用（不再「补算自动忽略」）');
+
+      // ── 导出：ignoredCourses 以「手动标记集合」为准（§4.18）──
+      // 直接调页面真实的 exportData()，从它交给 createObjectURL 的 Blob 里读回 JSON，
+      // 而不是在测试里复刻一遍导出逻辑（复刻等于只测测试自己）。
+      let capturedBlob = null;
+      const origCreate = sandbox.URL.createObjectURL;
+      sandbox.URL.createObjectURL = (b) => { capturedBlob = b; return 'blob:x'; };
+
+      // 场景 A：集合里有一门**当前课表里不存在**的陈旧课程 ID —— 也必须被带出去，
+      // 否则用户重新抓课表后，忽略记录会在导出时被悄悄丢掉。
+      g(`state.ignoredCourses['2025210001'] = new Set([${JSON.stringify(igId1)}, 'STALE_id_x']);`);
+      g('exportData()');
+      const exportedA = JSON.parse(capturedBlob.parts[0]);
+      ok(exportedA.students[0].ignoredCourses.includes('STALE_id_x'),
+         '导出保留课表里已不存在的陈旧忽略 ID（改以手动集合为准）',
+         exportedA.students[0].ignoredCourses);
+      ok(exportedA.students[0].ignoredCourses.includes(igId1),
+         '导出包含当前有效的手动忽略 ID');
+
+      // 场景 B：集合为空、但课程上还留着 ignored=true（手工构造的旧数据）→ 仍能带出
+      g('state.ignoredCourses = {};');
+      g('state.students[0].courses[1].ignored = true;');
+      g('exportData()');
+      const exportedB = JSON.parse(capturedBlob.parts[0]);
+      eq(exportedB.students[0].ignoredCourses, [igId1], '集合为空时回退到按 c.ignored 扫描课表');
+
+      // 场景 C：两处都没有 → 导出空数组
+      g('state.students[0].courses[1].ignored = false;');
+      g('exportData()');
+      eq(JSON.parse(capturedBlob.parts[0]).students[0].ignoredCourses, [], '无忽略时导出空数组');
+
+      sandbox.URL.createObjectURL = origCreate;
+
+      // 不持久化（§7.3 的口径不受影响）
+      g('saveIgnoredCourses()');
+      eq(JSON.stringify(g('localStorage._dump()')), '{}', '忽略课程仍然不写入 localStorage');
+
+      summary();
+    });
+  });
 }).catch(e => {
   console.error('\n集成测试异常：', e);
   process.exitCode = 1;

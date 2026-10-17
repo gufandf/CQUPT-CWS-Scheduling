@@ -1,6 +1,6 @@
 // 排班日分组自测：工作日/周末预设 ↔ 一周7天自由组合
 // 重点验证：向后兼容、分组结构规范化、模式往返不丢排班、渲染/导出/排班跟随动态分组
-const { g, ok, eq, section, summary, localStorage, el, writeFiles, rawHtml } = require('./harness.js');
+const { g, ok, eq, section, summary, localStorage, el, writeFiles, rawHtml, layoutStub } = require('./harness.js');
 
 const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
   name, courseId: `${name}_d${weekday}_p${begin}`, courseNum: 'C1', teacher: 'T', type: '必修',
@@ -8,7 +8,7 @@ const mkCourse = (name, weekday, begin, period, weeks, ignored) => ({
   periods: Array.from({ length: period }, (_, i) => begin + i), weeks,
   oddWeeks: weeks.filter(w => w % 2 === 1), evenWeeks: weeks.filter(w => w % 2 === 0),
   hasOdd: weeks.some(w => w % 2 === 1), hasEven: weeks.some(w => w % 2 === 0),
-  isFullDay: period >= 8, ignored: !!ignored, autoIgnored: false,
+  isFullDay: period >= 8, ignored: !!ignored,
 });
 
 function setupStudents(n) {
@@ -582,6 +582,254 @@ ok(inPlaceHtml.includes('status-ready') && inPlaceHtml.includes('已就绪'), '�
 ok(!inPlaceHtml.includes('status-loading'), '旧状态类被替换掉');
 eq(g("updateStudentListItem('2025999999')"), false, '条目不在 DOM 中时返回 false，调用方可回退整列重渲染');
 
+// ── L25c. 学号列表搜索（纯视图过滤，见 AGENT.md §4.15） ──
+section('L25c. 学号列表搜索：按姓名 / 学号过滤显示');
+
+ok(rawHtml().includes('id="studentSearch"'), '左侧面板存在搜索框 #studentSearch');
+ok(rawHtml().includes('oninput="setStudentQuery(this.value)"'), '搜索框的 oninput 接到 setStudentQuery');
+ok(rawHtml().includes('id="studentSearchClear"'), '存在「清除」按钮');
+// 搜索框必须在 #studentList **外面**：列表整段重写 innerHTML，放里面会丢焦点
+ok(rawHtml().indexOf('id="studentSearch"') < rawHtml().indexOf('id="studentList"'),
+   '搜索框在 DOM 中位于 #studentList 之前（不在会被整段重写的容器里）');
+ok(/\.student-search\s*\{/.test(rawHtml()), 'CSS 里有 .student-search 样式');
+
+// 准备一份含中英文姓名与学号的名单
+g(`state.students = [
+     {sid:'2025210001',name:'张三',status:'ready',courses:[]},
+     {sid:'2025210002',name:'李四',status:'ready',courses:[]},
+     {sid:'2025210003',name:'Alice',status:'ready',courses:[]},
+     {sid:'2025300004',name:'王五',status:'ready',courses:[]}
+   ];
+   state.studentQuery = ''; _animatedSids = new Set(state.students.map(s => s.sid));
+   renderStudentList();`);
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 4, '空查询词时渲染全部 4 人');
+
+// 按姓名匹配
+g("setStudentQuery('张')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 1, '按姓名子串过滤（张 → 1 人）');
+ok(el('studentList').innerHTML.includes('张三'), '命中的是张三');
+ok(!el('studentList').innerHTML.includes('李四'), '未命中的人不出现在列表里');
+
+// 按学号匹配
+g("setStudentQuery('2025300')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 1, '按学号子串过滤（2025300 → 1 人）');
+ok(el('studentList').innerHTML.includes('2025300004'), '命中的学号正确');
+
+// 大小写不敏感
+g("setStudentQuery('alice')");
+ok(el('studentList').innerHTML.includes('Alice'), '英文姓名不区分大小写（alice → Alice）');
+g("setStudentQuery('ALICE')");
+ok(el('studentList').innerHTML.includes('Alice'), '大写查询词同样命中');
+g("setStudentQuery('ali')");
+ok(el('studentList').innerHTML.includes('Alice'), '英文姓名支持子串匹配');
+
+// 多个命中
+g("setStudentQuery('2025')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 4, '学号公共前缀命中全部 4 人');
+
+// 首尾空白忽略
+g("setStudentQuery('  张三  ')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 1, '查询词首尾空白被忽略');
+
+// 无结果：给出明确提示，而不是一片空白
+g("setStudentQuery('不存在的人')");
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 0, '无匹配时不渲染任何条目');
+ok(el('studentList').innerHTML.includes('没有匹配'), '无匹配时给出「没有匹配」提示行');
+// 提示行里带上原始查询词，并把总数告诉用户（避免以为学号被删了）
+ok(el('studentList').innerHTML.includes('不存在的人'), '提示行里回显查询词');
+ok(el('studentList').innerHTML.includes('共 4 人'), '提示行里说明总人数');
+
+// 计数文案：搜索时同时给出总数与筛出数量
+g("setStudentQuery('张')");
+ok(String(el('studentCount').textContent).includes('共 4 人'), '搜索时计数仍显示总人数');
+ok(String(el('studentCount').textContent).includes('筛出 1 人'), '搜索时计数显示筛出数量');
+g("setStudentQuery('')");
+ok(!String(el('studentCount').textContent).includes('筛出'), '清空搜索后不再显示「筛出」');
+
+// 纯视图：过滤不改动 state.students
+g("setStudentQuery('张')");
+eq(g('state.students.length'), 4, '搜索不改动 state.students（纯视图过滤）');
+eq(g('filterStudentsByQuery(state.students).length'), 1, 'filterStudentsByQuery 只返回命中的子集');
+eq(g('filterStudentsByQuery(state.students, "").length'), 4, '空查询词返回全部');
+
+// 清除按钮：有查询词时显示、点了清空并复原列表
+g("setStudentQuery('张')");
+eq(el('studentSearchClear').hidden, false, '有查询词时「清除」按钮可见');
+g('clearStudentQuery()');
+eq(g('state.studentQuery'), '', 'clearStudentQuery 清空查询词');
+eq(el('studentSearch').value, '', 'clearStudentQuery 清空输入框');
+eq(el('studentSearchClear').hidden, true, '清空后「清除」按钮隐藏');
+eq((el('studentList').innerHTML.match(/class="student-item/g) || []).length, 4, '清空搜索后恢复全部 4 人');
+
+// Esc 清搜索，且不把事件透给全局（否则会去关弹窗）
+g("setStudentQuery('张')");
+let escStopped = g(`(() => { const e = { key:'Escape', _s:false, stopPropagation(){ e._s = true; } }; onStudentSearchKeydown(e); return e._s; })()`);
+eq(escStopped, true, 'Esc 清搜索时阻止冒泡（不会顺带关掉弹窗）');
+eq(g('state.studentQuery'), '', 'Esc 清空了查询词');
+g("setStudentQuery('')");
+let escIdle = g(`(() => { const e = { key:'Escape', _s:false, stopPropagation(){ e._s = true; } }; onStudentSearchKeydown(e); return e._s; })()`);
+eq(escIdle, false, '没有查询词时 Esc 不做任何事（也不阻止冒泡）');
+
+// 动画记账：搜索只少渲染几条，不能因此重放整列入场动画
+g(`state.studentQuery = ''; _animatedSids = new Set(state.students.map(s => s.sid)); renderStudentList();`);
+g("setStudentQuery('张')");
+ok(!/is-new/.test(el('studentList').innerHTML),
+   '搜索过滤后，保留下来的条目不会被误标成「新出现」（不重放入场动画）');
+g("setStudentQuery('')");
+ok(!/is-new/.test(el('studentList').innerHTML), '清空搜索同样不重放动画');
+eq(g('_animatedSids.size'), 4, '_animatedSids 始终按完整名单记账（过滤不影响它）');
+
+// 就地更新与搜索共存：被过滤掉的人不算「不在 DOM」，否则刷新课表会让列表反复重渲染
+g("setStudentQuery('张')");
+eq(g("updateStudentListItem('2025210001')"), true, '命中筛选的条目就地更新返回 true');
+eq(g("updateStudentListItem('2025210002')"), true,
+   '被搜索过滤掉的条目返回 true（不算失败，避免 fetchAllSchedules 反复整列重渲染）');
+eq(g("updateStudentListItem('2025999999')"), false, '真的不在名单里的人仍返回 false');
+g('clearStudentQuery()');
+
+// 搜索不参与排班 / 抓课表 / 导出
+g("setStudentQuery('张')");
+eq(g('isStudentVisible("2025210001")'), true, '命中筛选的人 isStudentVisible 为 true');
+eq(g('isStudentVisible("2025210002")'), false, '被过滤的人 isStudentVisible 为 false');
+g('state.studentQuery = "";');
+ok(g('typeof runSchedule') === 'function' && !/studentQuery/.test(g('String(runSchedule)')),
+   'runSchedule 不读 studentQuery（搜索不影响自动排班）');
+ok(!/studentQuery/.test(g('String(fetchAllSchedules)')),
+   'fetchAllSchedules 不读 studentQuery（搜索不影响抓课表）');
+
+// 搜索词不持久化（§7.3）
+g("state.studentQuery = '张'; loadStudentQuery();");
+eq(g('state.studentQuery'), '', 'loadStudentQuery 一律回到「不过滤」（不读存档）');
+eq(JSON.stringify(g('localStorage._dump()')), '{}', '搜索词不写入 localStorage');
+
+// ── L25d. 悬浮体验：删除上移、加大锁热区、悬浮班次时左列表滚动到该同学（见 AGENT.md §4.16） ──
+section('L25d. 悬浮体验：无上移 / 锁热区加大 / 悬浮班次滚动到该同学');
+
+const hoverCss = rawHtml();
+
+// ① 排班单元格里的学生标签悬浮**不再位移/缩放**
+const tagHover = /\.student-tag:hover\s*\{([^}]*)\}/.exec(hoverCss);
+ok(!!tagHover, 'CSS 里有 .student-tag:hover 规则');
+ok(tagHover && !/transform\s*:/.test(tagHover[1]),
+   '【需求】.student-tag:hover 不再声明 transform（上移+放大已删除）', tagHover && tagHover[1].trim());
+ok(tagHover && !/translateY/.test(tagHover[1]), '.student-tag:hover 里没有 translateY');
+// 但保留无位移的轻微反馈
+ok(tagHover && /box-shadow/.test(tagHover[1]), '悬浮仍保留阴影反馈（不改变几何）');
+// 锁定标签的 hover 不再需要「抵消 translateY」的反向声明
+const lockedHover = /\.student-tag\.locked:hover\s*\{([^}]*)\}/.exec(hoverCss);
+ok(lockedHover && !/transform/.test(lockedHover[1]),
+   '.student-tag.locked:hover 里已清掉用于抵消上移的 transform: none');
+// 拖拽落点反馈必须保留（别顺手删了）
+ok(/\.student-tag\.dragging\s*\{[^}]*animation\s*:\s*dragPulse/.test(hoverCss),
+   '拖拽中的 dragPulse 动画仍然保留（属落点反馈，不属悬浮动效）');
+ok(/@keyframes\s+dragPulse/.test(hoverCss), 'dragPulse 关键帧仍在');
+ok(/\.drop-available/.test(hoverCss), '可放置的反馈样式仍在');
+
+// ② 锁按钮热区加大到 24×24（图标本身只有 10px，原先可点区就是那 10px）
+const tagLockBtn = /\.student-tag\s+\.lock-btn\s*\{([^}]*)\}/.exec(hoverCss);
+ok(!!tagLockBtn, 'CSS 里有 .student-tag .lock-btn 规则');
+const lockCss = tagLockBtn ? tagLockBtn[1] : '';
+ok(/width\s*:\s*24px/.test(lockCss) && /height\s*:\s*24px/.test(lockCss),
+   '【需求】锁按钮热区加大到 24×24（原先约 10×10）', lockCss.trim().slice(0, 60));
+ok(/min-width\s*:\s*24px/.test(lockCss), '锁按钮带 min-width，热区不会被压回去');
+// 用负外边距抵消 padding 带来的布局增长 → 标签本身不会变大
+ok(/margin\s*:\s*[^;]*-4px/.test(lockCss), '用负横向 margin 抵掉热区增长（不撑宽标签）');
+// 纵向也要抵消：实测 24px 盒子会把标签从 26px 撑到 32px，整行随之变高
+ok(/-?\d+px\s+2px\s+-?\d+px\s+-4px/.test(lockCss) && /margin\s*:\s*-7px/.test(lockCss),
+   '【实测修正】用负纵向 margin 抵掉高度增长（否则标签 26px→32px、整行被撑高）', lockCss.trim().slice(0, 70));
+ok(/display\s*:\s*inline-flex/.test(lockCss) && /align-items\s*:\s*center/.test(lockCss),
+   '锁按钮仍是 flex 居中（图标在热区正中）');
+
+// ③ 悬浮班次 → 左列表滚动到该同学
+ok(hoverCss.includes('function hoverScheduleStudent'), '新增 hoverScheduleStudent()（悬浮班次专用）');
+ok(hoverCss.includes('function scrollStudentIntoView'), '新增 scrollStudentIntoView()（滚动数学）');
+ok(/onmouseenter="hoverScheduleStudent\('\$\{sid\}', true\)"/.test(hoverCss),
+   '值班表标签的 mouseenter 已接到 hoverScheduleStudent');
+// 左侧列表项仍用 highlightStudent（不在列表里滚动，否则鼠标在列表边缘移动会一直吸条目）
+ok(/class="student-item[^>]*onmouseenter="highlightStudent/.test(hoverCss),
+   '左侧列表项的 mouseenter 仍走 highlightStudent（不触发滚动）');
+ok(!/class="student-item[^>]*onmouseenter="hoverScheduleStudent/.test(hoverCss),
+   '左侧列表项没有被换成 hoverScheduleStudent（避免自己滚自己）');
+
+// 滚动数学：用 layoutStub 显式喂矩形（harness 没有 CSS 引擎）
+g(`state.students = [
+     {sid:'A',name:'甲',status:'ready',courses:[]},
+     {sid:'B',name:'乙',status:'ready',courses:[]},
+     {sid:'C',name:'丙',status:'ready',courses:[]}
+   ];
+   state.studentQuery = ''; _animatedSids = new Set(['A','B','C']);
+   renderStudentList();`);
+
+// 容器可视区：top 100，bottom 300（高 200）
+layoutStub.reset();
+layoutStub.setBoxRect({ top: 100, bottom: 300, left: 0, right: 300, width: 300, height: 200 });
+g("document.getElementById('studentList').scrollTop = 500;");
+g("document.getElementById('studentList').scrollHeight = 1000;");
+g("document.getElementById('studentList').clientHeight = 200;");
+
+// 情形一：目标已完整可见（150..180 落在 100..300 内）→ 一个像素都不动
+layoutStub.setItemRect('B', { top: 150, bottom: 180, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"B\"]'))");
+eq(g("document.getElementById('studentList').scrollTop"), 500, '目标已可见时不动滚动（避免划过时列表乱跳）');
+
+// 情形二：目标在可视区**下方** → 向下滚刚好够的距离（含 4px 余量）
+layoutStub.setItemRect('C', { top: 380, bottom: 410, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"C\"]'))");
+eq(g("document.getElementById('studentList').scrollTop"), 500 + (410 - (300 - 4)),
+   '目标在下方时向下滚「刚好露出来 + 4px 余量」的距离');
+
+// 情形三：目标在可视区**上方** → 向上滚
+g("document.getElementById('studentList').scrollTop = 500;");
+layoutStub.setItemRect('A', { top: 40, bottom: 70, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"A\"]'))");
+eq(g("document.getElementById('studentList').scrollTop"), 500 - (104 - 40),
+   '目标在上方时向上滚「刚好露出来 + 4px 余量」的距离');
+
+// 边界：不能滚出 [0, scrollHeight - clientHeight]
+g("document.getElementById('studentList').scrollTop = 10;");
+layoutStub.setItemRect('A', { top: 40, bottom: 70, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"A\"]'))");
+ok(g("document.getElementById('studentList').scrollTop") >= 0, '向上滚不会出现负的 scrollTop',
+   g("document.getElementById('studentList').scrollTop"));
+g("document.getElementById('studentList').scrollTop = 795;");   // max = 1000-200 = 800
+layoutStub.setItemRect('C', { top: 900, bottom: 930, left: 0, right: 300, width: 300, height: 30 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"C\"]'))");
+ok(g("document.getElementById('studentList').scrollTop") <= 800, '向下滚不会超过 maxScroll',
+   g("document.getElementById('studentList').scrollTop"));
+
+// 防御：传 null（学生被搜索过滤掉时就是这样）不报错
+g('scrollStudentIntoView(null)');
+ok(true, '传 null 时安静返回（搜索过滤掉的人不该触发滚动）');
+layoutStub.setItemRect('A', { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 });
+g("scrollStudentIntoView(document.querySelector('.student-item[data-sid=\"A\"]'))");
+ok(true, '空矩形（无布局信息）时不报错');
+
+// hoverScheduleStudent：高亮仍照常生效，且被搜索过滤掉时不滚
+layoutStub.reset();
+layoutStub.setBoxRect({ top: 100, bottom: 300, left: 0, right: 300, width: 300, height: 200 });
+layoutStub.setItemRect('A', { top: 400, bottom: 430, left: 0, right: 300, width: 300, height: 30 });
+g("document.getElementById('studentList').scrollTop = 0;");
+g("document.getElementById('studentList').scrollHeight = 1000;");
+g("document.getElementById('studentList').clientHeight = 200;");
+g("hoverScheduleStudent('A', true)");
+ok(g("document.querySelector('.student-item[data-sid=\"A\"]').classList.contains('highlight-linked')"),
+   'hoverScheduleStudent 仍然高亮左侧对应条目');
+eq(g("document.getElementById('studentList').scrollTop"), 430 - (300 - 4),
+   'hoverScheduleStudent 触发了滚动定位（与 scrollStudentIntoView 同一口径）');
+g("hoverScheduleStudent('A', false)");
+ok(!g("document.querySelector('.student-item[data-sid=\"A\"]').classList.contains('highlight-linked')"),
+   '移出时取消高亮');
+eq(g("document.getElementById('studentList').scrollTop"), 430 - (300 - 4), '移出时不再滚动');
+
+// 被搜索过滤掉的人：列表里没有节点，hoverScheduleStudent 不报错也不滚
+g("setStudentQuery('不存在');");
+g("document.getElementById('studentList').scrollTop = 42;");
+g("hoverScheduleStudent('A', true)");
+eq(g("document.getElementById('studentList').scrollTop"), 42, '被搜索过滤掉时不触发滚动');
+g('clearStudentQuery()');
+
+layoutStub.reset();
+
 section('L26. 分组只配单周 / 只配双周：合法配置，全链路可用');
 
 // 场景：工作日组只在单周排班，周末组照常每周——保存不再被拦截
@@ -652,6 +900,45 @@ ok(g('templateWarnings()').some(w => w.includes('双周没有任何生效班次'
 g('initAssignments()');
 eq(g('Object.keys(state.assignments.even)').length, 0, '双周不生成任何槽位');
 eq(g('Object.keys(state.assignments.odd)').length, 7, '单周 7 天各 1 个槽位');
+
+// ── L28. 课程忽略只有手动一种来源：界面接线（见 AGENT.md §4.18） ──
+// 用户要求「删除课程自动忽略功能，仅允许手动忽略」+「删除课表页右下角的重新排班按钮」。
+// §51 已在集成侧锁住模型/行为，这里只锁界面接线与文案。
+section('L28. 课程忽略的界面接线（手动唯一来源 + 无「重新排班」按钮）');
+
+{
+  const html = rawHtml();
+  // 取课表弹窗那一段（#courseModal → #confirmModal），并剥掉注释再判「重新排班」
+  const modalStart = html.indexOf('id="courseModal"');
+  const modalEnd = html.indexOf('id="confirmModal"');
+  ok(modalStart > 0 && modalEnd > modalStart, '能定位课表弹窗片段（DOM 结构未变）');
+  const modal = html.slice(modalStart, modalEnd).replace(/<!--[\s\S]*?-->/g, '');
+
+  ok(!modal.includes('runSchedule'), '课表弹窗内不再有任何 runSchedule() 入口（重新排班按钮已删除）');
+  ok(!modal.includes('重新排班'), '课表弹窗里连「重新排班」字样的按钮也没有了');
+  ok(modal.includes('clearIgnoredCourses()'), '「清除忽略」按钮接 clearIgnoredCourses()');
+  ok(!modal.includes('resetIgnoredCourses'), '不再引用已改名的 resetIgnoredCourses');
+  ok(modal.includes('只有手动') || modal.includes('手动点击决定'),
+     '弹窗内的说明文案写明了「忽略只由手动决定」');
+
+  // 左侧「开始排班」是唯一排班入口，必须还在
+  ok(html.includes('id="btnSchedule"') && /onclick="runSchedule\(\)"/.test(html),
+     '左侧「开始排班」按钮仍是排班入口（删掉的是弹窗里那个，不是这个）');
+
+  // 使用指南已同步（§4.14 要求面向用户的文档一起改）
+  // 注意：不能简单断言「不含『自动忽略』」——新文案里有一句「没有自动忽略」的否定说法。
+  // 要拦的是**旧口径**：声称课程会被自动忽略。
+  const guideStart = html.indexOf('id="guideContent"');
+  const guide = html.slice(guideStart, html.indexOf('id="aboutModal"'));
+  ok(!/会被自动忽略/.test(guide), '使用指南不再声称课程「会被自动忽略」');
+  ok(!/自动识别/.test(guide), '使用指南不再提「自动识别关键词」');
+  ok(!/实训/.test(guide), '使用指南不再举「实训」等自动忽略关键词');
+  ok(guide.includes('手动点击'), '使用指南说明了课程忽略需手动点击（唯一来源）');
+
+  // 弹窗底部应当只剩「关闭」
+  const footer = modal.slice(modal.indexOf('modal-footer'));
+  eq((footer.match(/<button/g) || []).length, 1, '课表弹窗底部只剩一个按钮（关闭）');
+}
 
 summary();
 }).catch(e => {
